@@ -128,7 +128,18 @@
 			overrideGiftee: string
 			gifteeList: string[]
 		}) {
-			let attemptGiftee = overrideGiftee || gifteeList[0] || ''
+			let attemptGiftee = overrideGiftee || gifteeList.find(g => g.toLowerCase().replaceAll(' ', '_') !== nation) || ''
+
+			if (overrideGiftee && overrideGiftee.toLowerCase().replaceAll(' ', '_') === nation) {
+				progress = [...progress, { text: `${nation} cannot gift to self`, color: 'blue' }]
+				return { success: false, xpin, fail: 'cannot gift to self' }
+			}
+
+			if (!overrideGiftee && gifteeList.length > 0 && !attemptGiftee) {
+				progress = [...progress, { text: `${nation} cannot gift to self`, color: 'blue' }]
+				return { success: false, xpin, fail: 'cannot gift to self' }
+			}
+
 			while (attemptGiftee) {
 				const {
 					cnx: newXpin,
@@ -148,9 +159,12 @@
 				console.log(fail)
 				if (fail === 'no capacity' || fail === `No such nation: "${cg}".`) {
 					info = [...info, { text: `${nation} failed to gift ${id} to ${cg}, ${fail}`, color: 'red' }]
-					if (!overrideGiftee) gifteeList.shift()
+					if (!overrideGiftee) {
+						const index = gifteeList.indexOf(cg)
+						if (index !== -1) gifteeList.splice(index, 1)
+					}
 					if (overrideGiftee) overrideGiftee = ''
-					attemptGiftee = gifteeList[0] || ''
+					attemptGiftee = gifteeList.find(g => g.toLowerCase().replaceAll(' ', '_') !== nation) || ''
 					console.log(attemptGiftee)
 					continue
 				}
