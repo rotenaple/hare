@@ -901,7 +901,7 @@
 				bind:content
 				type="html"
 				name="Finder">
-				<OpenButton bind:progress bind:openNewLinkArr={content} />
+				<OpenButton bind:progress bind:openNewLinkArr={content} {stopped} {stoppable} />
 			</Buttons>
 		</div>
 	</form>
