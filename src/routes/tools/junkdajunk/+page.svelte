@@ -13,9 +13,18 @@
 	import Terminal from '$lib/components/Terminal.svelte'
 	import ToolContent from '$lib/components/ToolContent.svelte'
 	import * as AlertDialog from '$lib/components/ui/alert-dialog'
+	import Button from '$lib/components/ui/button/button.svelte'
 	import { giftCard } from '$lib/helpers/gift'
 	import { parseXML } from '$lib/helpers/parser'
-	import { evaluateRule, getRuleSummary, ruleRequiresAdvancedData, type Action, type Rule } from '$lib/helpers/rules'
+	import {
+		evaluateRule,
+		getRuleRegionCacheKeys,
+		getRuleSummary,
+		ruleRequiresCardDetails,
+		type Action,
+		type AdvancedRuleData,
+		type Rule,
+	} from '$lib/helpers/rules'
 	import {
 		beforeUnload,
 		canonicalize,
@@ -62,6 +71,10 @@
 	let configMode = $state('Classic')
 	let rules: Rule[] = $state([])
 	let rulesLoaded = $state(false)
+
+	type KotamaCardList = {
+		cards?: Array<{ id: number }>
+	}
 
 	$effect(() => {
 		if (rulesLoaded) localStorage.setItem('junkdajunkRules', JSON.stringify(rules))
@@ -154,6 +167,40 @@
 	})
 	onDestroy(() => abortController.abort())
 
+	async function fetchKotamaCardIds(clause: string, from?: string): Promise<Set<number>> {
+		const params = new URLSearchParams({
+			select: 'min',
+			clauses: clause,
+			ua: main,
+			limit: '252525252525',
+		})
+		if (from) params.set('from', from)
+		const response = await fetch(`https://kotama.kractero.com/api?${params}`, {
+			signal: abortController.signal,
+		})
+		if (!response.ok) throw new Error(`Kotama returned ${response.status} for ${clause}`)
+		const data: KotamaCardList = await response.json()
+		return new Set((data.cards || []).map(card => Number(card.id)))
+	}
+
+	async function fetchKotamaCardIdCache(
+		entries: { key: string; clause: string; from?: string }[]
+	): Promise<Map<string, Set<number>>> {
+		const cardIds = new Map<string, Set<number>>()
+		if (entries.length === 0) return cardIds
+
+		progress = [...progress, { text: `Fetching card IDs for ${entries.length} checks...` }]
+
+		for (const { key, clause, from } of entries) {
+			if (abortController.signal.aborted || stopped) break
+			const ids = await fetchKotamaCardIds(clause, from)
+			cardIds.set(key, ids)
+			progress = [...progress, { text: `Cached ${ids.size} cards for ${key}` }]
+		}
+
+		return cardIds
+	}
+
 	async function onSubmit(e: Event) {
 		if (downloadable) {
 			dialogOpen = true
@@ -213,11 +260,34 @@
 		let actionCount = 0
 		let currCard = 0
 		let currSellCard = 0
+		let regionCardIds = new Map<string, Set<number>>()
+		let flagCardIds = new Map<string, Set<number>>()
 
 		let gifteeQueue = giftee
 			.split('\n')
 			.map(name => name.trim())
 			.filter(Boolean)
+
+		try {
+			if (configMode === 'Rules') {
+				const regions = [...new Set(rules.filter(r => r.enabled).flatMap(r => getRuleRegionCacheKeys(r)))]
+				regionCardIds = await fetchKotamaCardIdCache(
+					regions.map(r => ({ key: r, clause: `region-IS-${r.replaceAll('_', ' ')}` }))
+				)
+			} else if (regionalWhitelist.length > 0) {
+				regionCardIds = await fetchKotamaCardIdCache(
+					regionalWhitelist.map(r => ({ key: r, clause: `region-IS-${r.replaceAll('_', ' ')}` }))
+				)
+				if (flagWhitelist.length > 0) {
+					flagCardIds = await fetchKotamaCardIdCache(flagWhitelist.map(f => ({ key: f, clause: `flag-IS-${f}` })))
+				}
+			}
+		} catch (err) {
+			info = [...info, { text: `Error fetching region card lists: ${err}`, color: 'red' }]
+			stoppable = false
+			window.removeEventListener('beforeunload', beforeUnload)
+			return
+		}
 
 		for (let i = 0; i < puppetList.length; i++) {
 			let currentNationXPin = ''
@@ -256,15 +326,15 @@
 
 						if (configMode === 'Rules') {
 							let advancedDataFetched = false
-							let advancedData: { region?: string; flag?: string; bid?: number; owners?: number } = {}
+							let advancedData: AdvancedRuleData = { regionCardIds }
 							let matchedActions: Action[] = []
 							let matchedRuleSummary = ''
 
 							for (const rule of rules) {
 								if (!rule.enabled) continue
 
-								if (ruleRequiresAdvancedData(rule) && !advancedDataFetched) {
-									// only fetch advanced data if JDJ hits a rule that needs it
+								if (ruleRequiresCardDetails(rule) && !advancedDataFetched) {
+									// only fetch full card details if JDJ hits a rule that needs data not covered by the region cache
 									// skips requests if earlier rules already matched
 									const cardDetailsXml = await parseXML(
 										`${domain}/cgi-bin/api.cgi?cardid=${id}&season=${season}&q=card+markets+info+owners`,
@@ -297,6 +367,7 @@
 									}
 
 									advancedData = {
+										regionCardIds,
 										region,
 										flag,
 										bid: highestBid,
@@ -394,6 +465,14 @@
 									reason: `category set to gift`,
 								},
 								{
+									check: () => regionCardIds.size > 0 && [...regionCardIds.values()].some(set => set.has(Number(id))),
+									reason: `is in whitelisted region`,
+								},
+								{
+									check: () => flagCardIds.size > 0 && [...flagCardIds.values()].some(set => set.has(Number(id))),
+									reason: `is in whitelisted flag`,
+								},
+								{
 									check: () =>
 										category !== 'legendary' &&
 										raritiesMV[category] &&
@@ -443,10 +522,6 @@
 
 								const advancedConditions = [
 									{
-										check: () => flagWhitelist.some(f => flag.includes(f)),
-										reason: `Flag is whitelisted ${flag}`,
-									},
-									{
 										check: () => owners && Number(owners) > cardOwners.size,
 										reason: `has less owners than ${owners}`,
 									},
@@ -456,14 +531,6 @@
 											raritiesLowestBid[category] &&
 											highestBid >= Number(raritiesLowestBid[category]),
 										reason: `has high bid`,
-									},
-									{
-										check: () => !region && skipexnation,
-										reason: `S1 exnation`,
-									},
-									{
-										check: () => region && regionalWhitelist.includes(canonicalize(region)),
-										reason: `is in whitelisted ${region}`,
 									},
 								]
 
@@ -707,6 +774,22 @@
 		stoppable = false
 		window.removeEventListener('beforeunload', beforeUnload)
 	}
+
+	async function fetchPreset(name: string) {
+		if (name === 'S1CTE') {
+			const { default: raw } = await import('$lib/data/s1cte.txt?raw')
+			const nations = raw
+				.split('\n')
+				.filter(Boolean)
+				.map(id => `${id},1`)
+
+			// Append this to any existing card id whitelist to not overwrite
+			const existing = new Set(finderlist.split('\n').filter(Boolean))
+			const merged = [...existing, ...nations.filter(nation => !existing.has(nation))]
+			finderlist = merged.join('\n')
+			return
+		}
+	}
 </script>
 
 <AlertDialog.Root bind:open={dialogOpen}>
@@ -760,11 +843,15 @@
 			{/if}
 			<FormSelect bind:bindValue={junkMethod} id="junkMethod" items={['API', 'Manual']} label="Junk Mode" />
 			<FormSelect bind:bindValue={checkMode} id="checkMode" items={['Advanced', 'Simple']} label="Mode" />
+			<div class="-mb-6 flex flex-col">
+				<p class="text-muted-foreground mb-1 text-center font-light">Presets</p>
+				<div class="flex flex-wrap justify-center">
+					<Button tabindex={-1} onclick={() => fetchPreset('S1CTE')} variant="outline">S1 CTE</Button>
+				</div>
+			</div>
 			<FormTextArea bind:bindValue={finderlist} label={'Card ID Whitelist'} id="finderlist" />
-			{#if checkMode === 'Advanced'}
-				<FormTextArea bind:bindValue={regionalwhitelist} label={'Regional Whitelist'} id="regions" />
-				<FormTextArea bind:bindValue={flagwhitelist} label={'Flag Whitelist'} id="flags" />
-			{/if}
+			<FormTextArea bind:bindValue={regionalwhitelist} label={'Regional Whitelist'} id="regions" />
+			<FormTextArea bind:bindValue={flagwhitelist} label={'Flag Whitelist'} id="flags" />
 			<FormInput label={'Card Count Threshold'} bind:bindValue={cardcount} id="cardcount" />
 			{#if checkMode === 'Advanced'}
 				<FormInput label={'Owner Count Threshold'} bind:bindValue={owners} id="owners" />
@@ -800,9 +887,6 @@
 				id="skipseason"
 				items={['1', '2', '3', '4']}
 				label="Skip Seasons?" />
-			{#if checkMode === 'Advanced'}
-				<FormCheckbox bind:checked={skipexnation} id="skipexnation" label="Skip Exnation" />
-			{/if}
 			<FormInput label={'Process Up To'} bind:bindValue={junkUpTo} id="junkUpTo" required={true} />
 			<FormSelect
 				bind:bindValue={mode}
@@ -818,7 +902,7 @@
 			bind:downloadable
 			bind:content
 			name="junkDaJunk">
-			<OpenButton bind:progress bind:openNewLinkArr={content} />
+			<OpenButton bind:progress bind:openNewLinkArr={content} {stopped} {stoppable} />
 		</Buttons>
 	</form>
 	<Terminal bind:progress bind:info bind:continuousUpdate={junkCounter} />
