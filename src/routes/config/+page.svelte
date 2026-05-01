@@ -79,14 +79,15 @@
 		auctionAmount: '',
 		auctionMode: 'Transfer',
 		auctionKeep: '-1',
+		auctionTransferIncomplete: false,
 		junkdajunkConfigMode: 'Classic',
 		junkdajunkRules: [],
 	})
 
 	onMount(() => {
 		Object.keys(localStorageObject).forEach(key => {
-			if (key === 'junkdajunkExnation') {
-				localStorageObject.junkdajunkExnation = localStorage.getItem(key) === 'true'
+			if (key === 'junkdajunkExnation' || key === 'auctionTransferIncomplete') {
+				localStorageObject[key] = localStorage.getItem(key) === 'true'
 			} else {
 				localStorageObject[key] = localStorage.getItem(key) || localStorageObject[key]
 			}
@@ -390,6 +391,12 @@
 			label="Auction Mode"
 			bind:bindValue={localStorageObject.auctionMode}
 			items={['Transfer', 'Bids', 'Asks']} />
+		{#if localStorageObject.auctionMode === 'Transfer'}
+			<FormCheckbox
+				id="auctionTransferIncomplete"
+				label="Transfer Incomplete"
+				bind:checked={localStorageObject.auctionTransferIncomplete} />
+		{/if}
 		<FormInput
 			label="Keep"
 			subTitle="-Keep a certain amount of bank after auction (ex: setting 1 will only include nations with 1 bank over the amount)"

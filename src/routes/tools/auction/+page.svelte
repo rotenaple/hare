@@ -2,6 +2,7 @@
 	import { onDestroy, onMount } from 'svelte'
 	import { page } from '$app/state'
 	import Buttons from '$lib/components/Buttons.svelte'
+	import FormCheckbox from '$lib/components/FormCheckbox.svelte'
 	import UserAgent from '$lib/components/formFields/UserAgent.svelte'
 	import FormInput from '$lib/components/FormInput.svelte'
 	import FormSelect from '$lib/components/FormSelect.svelte'
@@ -28,6 +29,7 @@
 	let auctionMain = $state('')
 	let keep = $state('1')
 	let template = $state('Overall-None')
+	let transferIncomplete = $state(false)
 	let errors: Array<{ field: string | number; message: string }> = $state([])
 
 	onMount(() => {
@@ -39,13 +41,16 @@
 		auctionMain = page.url.searchParams.get('auctionMain') || (localStorage.getItem('auctionMain') as string) || ''
 		mode = page.url.searchParams.get('mode') || (localStorage.getItem('auctionMode') as string) || 'Transfer'
 		keep = page.url.searchParams.get('keep') || (localStorage.getItem('auctionKeep') as string) || '-1'
+		transferIncomplete =
+			(page.url.searchParams.get('transferIncomplete') || localStorage.getItem('auctionTransferIncomplete')) === 'true'
 	})
 
 	onDestroy(() => abortController.abort())
 
 	async function onSubmit(e: Event) {
 		e.preventDefault()
-		pushHistory(`?main=${main}&amount=${amount}&mode=${mode}`)
+		pushHistory(`?main=${main}&amount=${amount}&mode=${mode}&transferIncomplete=${transferIncomplete}`)
+		localStorage.setItem('auctionTransferIncomplete', String(transferIncomplete))
 		errors = checkUserAgent('main')
 		if (errors.length > 0) return
 		downloadable = false
@@ -130,8 +135,22 @@
 					let nationalBank = deckInfo.CARDS.INFO.BANK
 
 					const keepAmount = Number(keep) > 0 ? Number(keep) : 0
-					if (nationalBank >= Number(amount) + keepAmount) {
-						let cardsTransferable = Math.floor(nationalBank / Number(amount))
+					let cardsTransferable = 0
+					let availableBank = 0
+
+					if (transferIncomplete) {
+						availableBank = nationalBank - keepAmount
+						if (availableBank > 0) {
+							cardsTransferable = Math.ceil(availableBank / Number(amount))
+						}
+					} else {
+						if (nationalBank >= Number(amount) + keepAmount) {
+							cardsTransferable = Math.floor(nationalBank / Number(amount))
+							availableBank = cardsTransferable * Number(amount)
+						}
+					}
+
+					if (cardsTransferable > 0) {
 						const initialTransferable = cardsTransferable
 						const progressIndex = progress.length
 						progress = [...progress, { text: `${nation} can transfer ${cardsTransferable} cards!`, color: 'green' }]
@@ -145,45 +164,51 @@
 								return
 							}
 
-							if (count > 0 && transferCounts[key].count > 0) {
-								progress = [...progress, { text: `${i + 1} Generated ask link for card ID ${id}, season ${season}` }]
-								const singleAskLink = `${domain}/container=${canonicalize(auctionMain)}/nation=${canonicalize(auctionMain)}/page=deck/card=${id}${template === 'Overall-None' ? '/template-overall=none' : ''}/season=${season}?mode=ask&amount=${amount}&${urlParameters('Auction-Transfer', main)}`
-								content.push({
-									url: singleAskLink,
-									tableText: `Link to Ask`,
-								})
-								progress = [
-									...progress,
-									{
-										text: `${i + 1} Generated bid link for card ID ${id}, season ${season} to ${canonicalize(nation)}`,
-									},
-								]
+							let currentTransferAmount = transferIncomplete ? Math.min(availableBank, Number(amount)) : Number(amount)
+							currentTransferAmount = Math.round(currentTransferAmount * 100) / 100
 
-								const singleBidLink = `${domain}/container=${canonicalize(nation)}/nation=${canonicalize(nation)}/page=deck/card=${id}${template === 'Overall-None' ? '/template-overall=none' : ''}/season=${season}?mode=bid&amount=${amount}&${urlParameters('Auction-Transfer', main)}`
+							progress = [
+								...progress,
+								{ text: `${i + 1} Generated ask link for card ID ${id}, season ${season} (${currentTransferAmount})` },
+							]
+							const singleAskLink = `${domain}/container=${canonicalize(auctionMain)}/nation=${canonicalize(auctionMain)}/page=deck/card=${id}${template === 'Overall-None' ? '/template-overall=none' : ''}/season=${season}?mode=ask&amount=${currentTransferAmount}&${urlParameters('Auction-Transfer', main)}`
+							content.push({
+								url: singleAskLink,
+								tableText: `Link to Ask`,
+							})
+							progress = [
+								...progress,
+								{
+									text: `${i + 1} Generated bid link for card ID ${id}, season ${season} to ${canonicalize(nation)} (${currentTransferAmount})`,
+								},
+							]
 
-								bids.push({
-									url: singleBidLink,
-									tableText: `Link to Bid on ${canonicalize(nation)}`,
-								})
+							const singleBidLink = `${domain}/container=${canonicalize(nation)}/nation=${canonicalize(nation)}/page=deck/card=${id}${template === 'Overall-None' ? '/template-overall=none' : ''}/season=${season}?mode=bid&amount=${currentTransferAmount}&${urlParameters('Auction-Transfer', main)}`
 
-								transferCounts[key].count--
-								cardsTransferable--
-								currentTransferred++
+							bids.push({
+								url: singleBidLink,
+								tableText: `Link to Bid on ${canonicalize(nation)}`,
+							})
 
-								progress[progressIndex].text = `${nation} can transfer ${initialTransferable} cards! (${currentTransferred} of ${totalTransferable})`
+							if (transferIncomplete) availableBank -= currentTransferAmount
+							transferCounts[key].count--
+							cardsTransferable--
+							currentTransferred++
 
-								if (transferCounts[key].count === 0) {
-									transferableIDs.splice(currIndex, 1)
+							progress[progressIndex].text =
+								`${nation} can transfer ${initialTransferable} cards! (${currentTransferred} of ${totalTransferable})`
 
-									if (currIndex > 0) currIndex--
-								}
+							if (transferCounts[key].count === 0) {
+								transferableIDs.splice(currIndex, 1)
+
+								if (currIndex > 0) currIndex--
 							}
 
 							currIndex = (currIndex + 1) % transferableIDs.length
 						}
 						bank += nationalBank
 					} else {
-						if (nationalBank < Number(amount)) {
+						if (availableBank < Number(amount)) {
 							progress = [
 								...progress,
 								{ text: `${nation} cannot afford any cards (Bank: ${nationalBank}).`, color: 'yellow' },
@@ -220,7 +245,10 @@
 	additional={`<p class="mb-2">
 	Mode Transfer will first sum the total amount of transfer cards located on the main nation. It will then figure out how many times
 	the provided puppets can transfer under the amount. It will then generate bid links equal to that amount, then ask links decrementing
-	until all possible transfers have links. On
+	until all possible transfers have links.
+</p>
+<p class="mb-2">
+	Toggle Transfer Incomplete will use the total bank minus the keep amount and break it into parts where the largest single transfer is at the set amount.
 </p>
 <p class="mb-2">
 	Mode Bid/Ask will just place one bid or ask with the amount from the main nation on each card. You can place more than one bid
@@ -246,6 +274,9 @@
 		{/if}
 		<FormTextArea bind:bindValue={transferCards} label={'Cards'} id="transferCards" required />
 		<FormSelect id="mode" label="Mode" bind:bindValue={mode} items={['Transfer', 'Bids', 'Asks']} />
+		{#if mode === 'Transfer'}
+			<FormCheckbox bind:checked={transferIncomplete} id="transferIncomplete" label="Transfer Incomplete" />
+		{/if}
 		<FormSelect id="template" label="Template" bind:bindValue={template} items={['Overall-None', 'Regular']} />
 		<FormInput label="Main Nation" bind:bindValue={auctionMain} id="auctionMain" required={true} />
 		<FormInput label="Amount" bind:bindValue={amount} id="amount" required={true} />
