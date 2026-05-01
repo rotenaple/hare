@@ -205,7 +205,10 @@
 
 				console.log(fail)
 				if (fail === 'no capacity' || fail === `No such nation: "${cg}".`) {
-					info = [...info, { text: `${nation} failed to gift ${id} to ${cg}, ${fail}`, color: 'red' }]
+					info = [
+						...info.slice(-100),
+						{ text: `${nation} failed to gift ${id} to ${cg}, ${fail}`, color: 'red' },
+					]
 					if (!overrideGiftee) gifteeList.shift()
 					if (overrideGiftee) overrideGiftee = ''
 					attemptGiftee = gifteeList[0] || ''
@@ -214,7 +217,10 @@
 				}
 
 				if (fail) {
-					info = [...info, { text: `${nation} failed to gift ${id} to ${cg}, ${fail}`, color: 'red' }]
+					info = [
+						...info.slice(-100),
+						{ text: `${nation} failed to gift ${id} to ${cg}, ${fail}`, color: 'red' },
+					]
 					content.push({
 						url: `${domain}/page=deck/container=${nation}/nation=${nation}/card=${id}/season=${season}/gift=1?${urlParameters('Finder', main)}&giftto=${cg.toLowerCase().replaceAll(' ', '_')}`,
 						tableText: `Link to ${nation}`,
@@ -222,7 +228,7 @@
 					return { success: false, xpin, fail }
 				}
 
-				progress = [...progress, { text: `${nation} gifted ${id} to ${cg}`, color: 'green' }]
+				progress = [...progress.slice(-100), { text: `${nation} gifted ${id} to ${cg}`, color: 'green' }]
 				giftedCards.add(`${id},${season}`)
 				return { success: true, xpin }
 			}
@@ -237,7 +243,10 @@
 					info = [...info, { text: `More puppets than cards, proceeding...` }]
 					const perNationXPins = <Array<{ nation: string; xpin: string }>>[]
 					for (let i = 0; i < matches.length; i++) {
-						progress = [...progress, { text: `Processing card ${i + 1}/${matches.length} cards` }]
+						progress = [
+							...progress.slice(-100),
+							{ text: `Processing card ${i + 1}/${matches.length} cards` },
+						]
 						if (
 							mode === 'Gift One' &&
 							giftedCards.size > 0 &&
@@ -287,11 +296,11 @@
 								}
 								processedOwners.add(owner)
 								if (giftedCards.has(`${id},${season}`) && mode === 'Gift One') {
-									progress = [...progress, { text: `Already gifted ${id}`, color: 'blue' }]
+									progress = [...progress.slice(-100), { text: `Already gifted ${id}`, color: 'blue' }]
 									continue
 								}
 								if (soldCards.has(`${id},${season}`) && mode === 'Sell One') {
-									progress = [...progress, { text: `Already sold ${id}`, color: 'blue' }]
+									progress = [...progress.slice(-100), { text: `Already sold ${id}`, color: 'blue' }]
 									continue
 								}
 
@@ -341,7 +350,10 @@
 												}
 											}
 										} else {
-											progress = [...progress, { text: `${nation} owns ${id}, adding sell link!`, color: 'green' }]
+											progress = [
+												...progress.slice(-100),
+												{ text: `${nation} owns ${id}, adding sell link!`, color: 'green' },
+											]
 											content.push({
 												url: `${domain}/page=deck/container=${nation}/nation=${nation}/card=${id}/season=${season}?${urlParameters('Finder', main)}`,
 												tableText: `Link to ${nation}`,
@@ -391,7 +403,10 @@
 						}
 
 						try {
-							progress = [...progress, { text: `Processing ${nation} ${i + 1}/${puppetList.length} puppets` }]
+							progress = [
+								...progress.slice(-100),
+								{ text: `Processing ${nation} ${i + 1}/${puppetList.length} puppets` },
+							]
 							const xmlDocument = await parseXML(`${domain}/cgi-bin/api.cgi?nationname=${nation}&q=cards+deck`, main)
 							let cards: Array<Card> = xmlDocument.CARDS.DECK.CARD
 							cards = cards ? (Array.isArray(cards) ? cards : [cards]) : []
@@ -424,11 +439,17 @@
 							if (filteredCards && filteredCards.length > 0) {
 								for (const { id, season, count: originalCount, giftee } of filteredCards) {
 									if (giftedCards.has(`${id},${season}`) && mode === 'Gift One') {
-										progress = [...progress, { text: `Already gifted ${id} (S${season})`, color: 'blue' }]
+										progress = [
+											...progress.slice(-100),
+											{ text: `Already gifted ${id} (S${season})`, color: 'blue' },
+										]
 										continue
 									}
 									if (soldCards.has(`${id},${season}`) && mode === 'Sell One') {
-										progress = [...progress, { text: `Already sold ${id} (S${season})`, color: 'blue' }]
+										progress = [
+											...progress.slice(-100),
+											{ text: `Already sold ${id} (S${season})`, color: 'blue' },
+										]
 										continue
 									}
 
@@ -485,7 +506,7 @@
 											}
 										} else {
 											if (foundSet.has(`${id},${season}`)) foundSet.delete(`${id},${season}`)
-											progress = [...progress, { text: `${nation} owns ${id}!`, color: 'green' }]
+											progress = [...progress.slice(-100), { text: `${nation} owns ${id}!`, color: 'green' }]
 											content.push({
 												url: `${domain}/page=deck/container=${nation}/nation=${nation}/card=${id}/season=${season}?${urlParameters('Finder', main)}`,
 												tableText: `Link to ${nation}`,
@@ -522,7 +543,10 @@
 					}
 
 					try {
-						progress = [...progress, { text: `Processing ${nation} ${i + 1}/${puppetList.length} puppets` }]
+						progress = [
+							...progress.slice(-100),
+							{ text: `Processing ${nation} ${i + 1}/${puppetList.length} puppets` },
+						]
 						const xmlDocument = await parseXML(`${domain}/cgi-bin/api.cgi?nationname=${nation}&q=cards+deck`, main)
 						let cards: Array<Card> = xmlDocument.CARDS.DECK.CARD
 						cards = cards ? (Array.isArray(cards) ? cards : [cards]) : []
@@ -579,7 +603,10 @@
 										if (fail === 'not enough bank') keepGifting = false
 									}
 								} else {
-									progress = [...progress, { text: `${nation} owns ${id}, adding to sell!`, color: 'green' }]
+									progress = [
+										...progress.slice(-100),
+										{ text: `${nation} owns ${id}, adding to sell!`, color: 'green' },
+									]
 									content.push({
 										url: `${domain}/page=deck/container=${nation}/nation=${nation}/card=${id}/season=${season}?${urlParameters('Finder', main)}`,
 										tableText: `Link to ${nation}`,
@@ -596,30 +623,7 @@
 					}
 				}
 			} else if (findMode === '1949 Shanghai Mode') {
-				const exclusionList = exclusionNations
-					.split('\n')
-					.map(n => n.trim().toLowerCase().replaceAll(' ', '_'))
-					.filter(Boolean)
-				const alreadyOwned = new Set<string>()
-
-				info = [...info, { text: `Scanning ${exclusionList.length} exclusion nations...` }]
-				for (let i = 0; i < exclusionList.length; i++) {
-					if (stopped || abortController.signal.aborted) break
-					const nation = exclusionList[i]
-					progress = [...progress, { text: `Scanning exclusion: ${nation} (${i + 1}/${exclusionList.length})` }]
-					try {
-						const xml = await parseXML(`${domain}/cgi-bin/api.cgi?nationname=${nation}&q=cards+deck`, main)
-						let cards: Array<Card> = xml.CARDS.DECK.CARD
-						cards = cards ? (Array.isArray(cards) ? cards : [cards]) : []
-						for (const card of cards) {
-							alreadyOwned.add(`${card.CARDID},${card.SEASON}`)
-						}
-					} catch (err) {
-						info = [...info, { text: `Error scanning exclusion ${nation}: ${err}`, color: 'red' }]
-					}
-				}
-
-				info = [...info, { text: `Scanning ${puppetList.length} puppets for available cards...` }]
+				info = [{ text: `Scanning ${puppetList.length} puppets for available cards...` }]
 				const cardOwnership = new Map<
 					string,
 					Array<{ nation: string; nsp?: string; category: string; mv: number }>
@@ -630,7 +634,10 @@
 				for (let i = 0; i < puppetList.length; i++) {
 					if (stopped || abortController.signal.aborted) break
 					const { nation, nationSpecificPassword } = puppetList[i]
-					progress = [...progress, { text: `Scanning puppet: ${nation} (${i + 1}/${puppetList.length})` }]
+					progress = [
+						...progress.slice(-100),
+						{ text: `Scanning puppet: ${nation} (${i + 1}/${puppetList.length})` },
+					]
 					try {
 						const xml = await parseXML(`${domain}/cgi-bin/api.cgi?nationname=${nation}&q=cards+deck+info`, main)
 						const bank = Number(xml.CARDS.INFO.BANK)
@@ -640,7 +647,6 @@
 						cards = cards ? (Array.isArray(cards) ? cards : [cards]) : []
 						for (const card of cards) {
 							const key = `${card.CARDID},${card.SEASON}`
-							if (alreadyOwned.has(key)) continue
 
 							if (finderConfig[card.CATEGORY]?.includes(Number(card.SEASON))) {
 								if (!cardOwnership.has(key)) cardOwnership.set(key, [])
@@ -653,7 +659,47 @@
 							}
 						}
 					} catch (err) {
-						info = [...info, { text: `Error scanning puppet ${nation}: ${err}`, color: 'red' }]
+						info = [
+							...info.slice(-100),
+							{ text: `Error scanning puppet ${nation}: ${err}`, color: 'red' },
+						]
+					}
+				}
+
+				const exclusionList = exclusionNations
+					.split('\n')
+					.map((n) => n.trim().toLowerCase().replaceAll(' ', '_'))
+					.filter(Boolean)
+
+				if (exclusionList.length > 0) {
+					info = [...info.slice(-100), { text: `Scanning ${exclusionList.length} exclusion nations...` }]
+					for (let i = 0; i < exclusionList.length; i++) {
+						if (stopped || abortController.signal.aborted) break
+						const nation = exclusionList[i]
+						progress = [
+							...progress.slice(-100),
+							{ text: `Scanning exclusion: ${nation} (${i + 1}/${exclusionList.length})` },
+						]
+						try {
+							const xml = await parseXML(
+								`${domain}/cgi-bin/api.cgi?nationname=${nation}&q=cards+deck`,
+								main
+							)
+							let cards: Array<Card> = xml.CARDS.DECK.CARD
+							cards = cards ? (Array.isArray(cards) ? cards : [cards]) : []
+							for (const card of cards) {
+								const key = `${card.CARDID},${card.SEASON}`
+								// Memory optimization: Prune the existing candidate map instead of storing a huge exclusion set
+								if (cardOwnership.has(key)) {
+									cardOwnership.delete(key)
+								}
+							}
+						} catch (err) {
+							info = [
+								...info.slice(-100),
+								{ text: `Error scanning exclusion ${nation}: ${err}`, color: 'red' },
+							]
+						}
 					}
 				}
 
@@ -719,7 +765,9 @@
 
 						const eligible = potentialOwners.filter((o) => puppetVirtualBanks.get(o.nation)! >= cost)
 						if (eligible.length > 0) {
-							eligible.sort((a, b) => puppetVirtualBanks.get(b.nation)! - puppetVirtualBanks.get(a.nation)!)
+							eligible.sort(
+								(a, b) => puppetVirtualBanks.get(b.nation)! - puppetVirtualBanks.get(a.nation)!
+							)
 							const choice = eligible[0]
 							const [id, season] = key.split(',')
 							assignments.push({ nation: choice.nation, id, season, nsp: choice.nsp, cost, target })
@@ -735,7 +783,7 @@
 				processBucket(lowBucket, lowValueTarget)
 
 				info = [
-					...info,
+					...info.slice(-100),
 					{
 						text: `Allocated ${assignments.length} gifts (${highBucket.length} high, ${lowBucket.length} low). ${remainingGifts.length} cards skipped due to bank limits.`,
 					},
@@ -744,7 +792,7 @@
 					if (stopped || abortController.signal.aborted) break
 					const { nation, id, season, nsp, target } = assignments[i]
 					progress = [
-						...progress,
+						...progress.slice(-100),
 						{
 							text: `Gifting ${id} (S${season}) to ${target} from ${nation} (${i + 1}/${assignments.length})`,
 						},
@@ -775,7 +823,10 @@
 				if (remainingGifts.length > 0) {
 					for (const gift of remainingGifts) {
 						content.push({
-							url: `${domain}/page=deck/card=${gift.id}/season=${gift.season}?${urlParameters('Finder', main)}`,
+							url: `${domain}/page=deck/card=${gift.id}/season=${gift.season}?${urlParameters(
+								'Finder',
+								main
+							)}`,
 							tableText: `Remaining: ${gift.id} (S${gift.season}) on ${gift.owners.join(', ')}`,
 						})
 					}
