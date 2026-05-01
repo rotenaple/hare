@@ -11,6 +11,9 @@
 	import Terminal from '$lib/components/Terminal.svelte'
 	import ToolContent from '$lib/components/ToolContent.svelte'
 	import Button from '$lib/components/ui/button/button.svelte'
+	import Checkbox from '$lib/components/ui/checkbox/checkbox.svelte'
+	import Input from '$lib/components/ui/input/input.svelte'
+	import Label from '$lib/components/ui/label/label.svelte'
 	import { parseXML } from '$lib/helpers/parser'
 	import { checkUserAgent, pushHistory, urlParameters } from '$lib/helpers/utils'
 	import type { Card } from '$lib/types'
@@ -47,6 +50,8 @@
 	let exclusionNations = $state('')
 	let highValueTarget = $state('')
 	let lowValueTarget = $state('')
+	let highValueEnabled = $state(true)
+	let lowValueEnabled = $state(true)
 	let highValueThresholds = $state({
 		common: 10,
 		uncommon: 10,
@@ -54,6 +59,7 @@
 		'ultra-rare': 10,
 		epic: 10,
 	})
+	let shanghaiGiftMode = $state('Gift 1')
 
 	onMount(() => {
 		domain = `https://${localStorage.getItem('connectionUrl') || 'www'}.nationstates.net`
@@ -90,6 +96,8 @@
 		highValueTarget =
 			page.url.searchParams.get('highValueTarget') || localStorage.getItem('highValueTarget') || ''
 		lowValueTarget = page.url.searchParams.get('lowValueTarget') || localStorage.getItem('lowValueTarget') || ''
+		highValueEnabled = page.url.searchParams.get('highValueEnabled') === 'false' ? false : true
+		lowValueEnabled = page.url.searchParams.get('lowValueEnabled') === 'false' ? false : true
 		keepOne = page.url.searchParams.get('keepOne') || localStorage.getItem('keepOne') || '1'
 		giftOverMVValue = parseFloat(
 			page.url.searchParams.get('giftOverMVValue') || localStorage.getItem('giftOverMVValue') || '10'
@@ -99,6 +107,10 @@
 			page.url.searchParams.get('exclusionNations')?.split(',').join('\n') ||
 			localStorage.getItem('exclusionNations') ||
 			''
+		shanghaiGiftMode =
+			page.url.searchParams.get('shanghaiGiftMode') ||
+			localStorage.getItem('shanghaiGiftMode') ||
+			'Gift 1'
 	})
 	$effect(() => {
 		localStorage.setItem('finderConfig', JSON.stringify(finderConfig))
@@ -113,6 +125,15 @@
 		localStorage.setItem('lowValueTarget', lowValueTarget)
 	})
 	$effect(() => {
+		localStorage.setItem('shanghaiGiftMode', shanghaiGiftMode)
+	})
+	$effect(() => {
+		localStorage.setItem('highValueEnabled', highValueEnabled.toString())
+	})
+	$effect(() => {
+		localStorage.setItem('lowValueEnabled', lowValueEnabled.toString())
+	})
+	$effect(() => {
 		localStorage.setItem('highValueThresholds', JSON.stringify(highValueThresholds))
 	})
 
@@ -121,7 +142,7 @@
 	async function onSubmit(e: Event) {
 		e.preventDefault()
 		pushHistory(
-			`?main=${main}&mode=${mode}${giftee ? `&giftee=${giftee.split('\n').join(',')}` : ''}&findMode=${findMode}${['General', '1949 Shanghai Mode'].includes(findMode) ? `&finderConfig=${JSON.stringify(finderConfig)}` : ''}${findMode === 'General' ? `&giftOverMVValue=${giftOverMVValue}` : ''}${findMode === '1949 Shanghai Mode' ? `&exclusionNations=${exclusionNations.split('\n').join(',')}&highValueTarget=${highValueTarget}&lowValueTarget=${lowValueTarget}` : ''}${keepOne ? `&keepOne=${keepOne}` : ''}`
+			`?main=${main}&mode=${mode}${giftee ? `&giftee=${giftee.split('\n').join(',')}` : ''}&findMode=${findMode}${['General', '1949 Shanghai Mode'].includes(findMode) ? `&finderConfig=${JSON.stringify(finderConfig)}` : ''}${findMode === 'General' ? `&giftOverMVValue=${giftOverMVValue}` : ''}${findMode === '1949 Shanghai Mode' ? `&exclusionNations=${exclusionNations.split('\n').join(',')}&highValueTarget=${highValueTarget}&lowValueTarget=${lowValueTarget}&highValueEnabled=${highValueEnabled}&lowValueEnabled=${lowValueEnabled}&shanghaiGiftMode=${shanghaiGiftMode}` : ''}${keepOne ? `&keepOne=${keepOne}` : ''}`
 		)
 		errors = checkUserAgent(main)
 		if (errors.length > 0) return
@@ -671,7 +692,7 @@
 					.map((n) => n.trim().toLowerCase().replaceAll(' ', '_'))
 					.filter(Boolean)
 
-				if (exclusionList.length > 0) {
+				if (shanghaiGiftMode === 'Gift 1' && exclusionList.length > 0) {
 					info = [...info.slice(-100), { text: `Scanning ${exclusionList.length} exclusion nations...` }]
 					for (let i = 0; i < exclusionList.length; i++) {
 						if (stopped || abortController.signal.aborted) break
@@ -765,13 +786,21 @@
 
 						const eligible = potentialOwners.filter((o) => puppetVirtualBanks.get(o.nation)! >= cost)
 						if (eligible.length > 0) {
-							eligible.sort(
-								(a, b) => puppetVirtualBanks.get(b.nation)! - puppetVirtualBanks.get(a.nation)!
-							)
-							const choice = eligible[0]
-							const [id, season] = key.split(',')
-							assignments.push({ nation: choice.nation, id, season, nsp: choice.nsp, cost, target })
-							puppetVirtualBanks.set(choice.nation, puppetVirtualBanks.get(choice.nation)! - cost)
+							if (shanghaiGiftMode === 'Gift 1') {
+								eligible.sort(
+									(a, b) => puppetVirtualBanks.get(b.nation)! - puppetVirtualBanks.get(a.nation)!
+								)
+								const choice = eligible[0]
+								const [id, season] = key.split(',')
+								assignments.push({ nation: choice.nation, id, season, nsp: choice.nsp, cost, target })
+								puppetVirtualBanks.set(choice.nation, puppetVirtualBanks.get(choice.nation)! - cost)
+							} else {
+								for (const choice of eligible) {
+									const [id, season] = key.split(',')
+									assignments.push({ nation: choice.nation, id, season, nsp: choice.nsp, cost, target })
+									puppetVirtualBanks.set(choice.nation, puppetVirtualBanks.get(choice.nation)! - cost)
+								}
+							}
 						} else {
 							const [id, season] = key.split(',')
 							remainingGifts.push({ id, season, owners: potentialOwners.map((o) => o.nation) })
@@ -779,8 +808,8 @@
 					}
 				}
 
-				processBucket(highBucket, highValueTarget)
-				processBucket(lowBucket, lowValueTarget)
+				if (highValueEnabled) processBucket(highBucket, highValueTarget)
+				if (lowValueEnabled) processBucket(lowBucket, lowValueTarget)
 
 				info = [
 					...info.slice(-100),
@@ -912,17 +941,32 @@
 			<FinderRaritySeason bind:config={finderConfig} />
 			<FormInput bind:bindValue={giftOverMVValue} id="giftOverMVValue" label="Gift Over MV" />
 		{:else if findMode === '1949 Shanghai Mode'}
+			<FormSelect
+				bind:bindValue={shanghaiGiftMode}
+				id="shanghaiGiftMode"
+				items={['Gift 1', 'Gift All']}
+				label="Shanghai Behavior" />
 			<div class="flex flex-col gap-4">
-				<FormInput
-					label={'High Value Target'}
-					bind:bindValue={highValueTarget}
-					id="highValueTarget"
-					required={true} />
-				<FormInput
-					label={'Low Value Target'}
-					bind:bindValue={lowValueTarget}
-					id="lowValueTarget"
-					required={true} />
+				<div class="flex max-w-lg items-center justify-between gap-4">
+					<Label class="w-24" for="highValueTarget">High Value Target</Label>
+					<Checkbox bind:checked={highValueEnabled} id="highValueEnabled" />
+					<Input
+						class="max-w-max text-right text-base"
+						id="highValueTarget"
+						bind:value={highValueTarget}
+						required={highValueEnabled}
+						disabled={!highValueEnabled} />
+				</div>
+				<div class="flex max-w-lg items-center justify-between gap-4">
+					<Label class="w-24" for="lowValueTarget">Low Value Target</Label>
+					<Checkbox bind:checked={lowValueEnabled} id="lowValueEnabled" />
+					<Input
+						class="max-w-max text-right text-base"
+						id="lowValueTarget"
+						bind:value={lowValueTarget}
+						required={lowValueEnabled}
+						disabled={!lowValueEnabled} />
+				</div>
 			</div>
 			<FormTextArea
 				label={'Exclusion Nations'}
