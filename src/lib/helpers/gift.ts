@@ -24,6 +24,15 @@ export async function giftCard({
 
 	const prepare = await parseXML(`${fetchUrl}prepare&c=giftcard`, main, cnx ? '' : authPassword, authXpin)
 	if (!cnx) cnx = prepare['x-pin'] || ''
+
+	if (!prepare.NATION) {
+		return { cnx, giftee: specificGiftee, fail: 'Failed to prepare gift (API error)' }
+	}
+
+	if (prepare.NATION.ERROR) {
+		return { cnx, giftee: specificGiftee, fail: prepare.NATION.ERROR }
+	}
+
 	const token = prepare.NATION.SUCCESS
 
 	const result = await parseXML(`${fetchUrl}execute&c=giftcard&token=${token}`, main, '', cnx)

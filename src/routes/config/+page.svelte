@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte'
+	import FinderRaritySeason from '$lib/components/FinderRaritySeason.svelte'
 	import FormCheckbox from '$lib/components/FormCheckbox.svelte'
 	import FormInput from '$lib/components/FormInput.svelte'
 	import FormSelect from '$lib/components/FormSelect.svelte'
@@ -12,6 +13,15 @@
 	import { defaultPrices } from '$lib/helpers/utils'
 	import { setMode } from 'mode-watcher'
 	import { toast } from 'svelte-sonner'
+
+	const defaultFinderConfig = {
+		common: [],
+		uncommon: [],
+		rare: [],
+		'ultra-rare': [1, 2, 3, 4],
+		epic: [1, 2, 3, 4],
+		legendary: [1, 2, 3, 4],
+	}
 
 	const localStorageObject: { [key: string]: any } = $state({
 		connectionUrl: 'www',
@@ -43,14 +53,24 @@
 		junkMethod: 'API',
 		jdjCheckMode: 'Advanced',
 		findMode: 'Specific Cards',
-		giftLegendaries: true,
+		finderConfig: defaultFinderConfig,
 		giftOverMVValue: 10,
 		finderMode: 'Gift',
+		highValueTarget: '',
+		lowValueTarget: '',
+		highValueThresholds: {
+			common: 10,
+			uncommon: 10,
+			rare: 10,
+			'ultra-rare': 10,
+			epic: 10,
+		},
 		junkdajunkRarities: defaultPrices,
 		junkdajunkRaritiesBid: defaultPrices,
 		junkdajunkRaritiesSell: defaultPrices,
 		junkdajunkRaritiesBidSell: defaultPrices,
 		finderGiftee: '',
+		exclusionNations: '',
 		keepOne: false,
 		junkdajunkOwnerCount: '',
 		junkdajunkCardCount: '',
@@ -86,7 +106,9 @@
 	onMount(() => {
 		Object.keys(localStorageObject).forEach(key => {
 			if (key === 'junkdajunkExnation') {
-				localStorageObject.junkdajunkExnation = localStorage.getItem(key) === 'true'
+				localStorageObject[key] = localStorage.getItem(key) === 'true'
+			} else if (['finderConfig', 'junkdajunkRarities', 'junkdajunkRaritiesBid', 'junkdajunkRaritiesSell', 'junkdajunkRaritiesBidSell'].includes(key)) {
+				// handled below by the rarities JSON-parse block — skip raw string assignment
 			} else {
 				localStorageObject[key] = localStorage.getItem(key) || localStorageObject[key]
 			}
@@ -97,6 +119,8 @@
 			'junkdajunkRaritiesBid',
 			'junkdajunkRaritiesSell',
 			'junkdajunkRaritiesBidSell',
+			'finderConfig',
+			'highValueThresholds',
 		]
 		rarities.forEach(key => {
 			if (typeof localStorageObject[key] === 'string') {
@@ -146,7 +170,7 @@
 					changes.push(key)
 				}
 				localStorage.setItem(key, localStorageObject[key])
-			} else if (key === 'junkdajunkRules') {
+			} else if (['junkdajunkRules', 'finderConfig', 'highValueThresholds'].includes(key)) {
 				if (localStorage.getItem(key) !== JSON.stringify(localStorageObject[key])) {
 					changes.push(key)
 				}
@@ -322,16 +346,30 @@
 		<FormSelect
 			bind:bindValue={localStorageObject.findMode}
 			id="findMode"
-			items={['Specific Cards', 'General']}
+			items={['Specific Cards', 'General', '1949 Shanghai Mode']}
 			label="Behavior" />
-		<FormCheckbox bind:checked={localStorageObject.giftLegendaries} id="giftlegendaries" label="Gift Legends" />
+		<FinderRaritySeason bind:config={localStorageObject.finderConfig} />
+		<div class="flex flex-col gap-4">
+			<FormInput
+				label={'High Value Target'}
+				bind:bindValue={localStorageObject.highValueTarget}
+				id="highValueTarget" />
+			<FormInput
+				label={'Low Value Target'}
+				bind:bindValue={localStorageObject.lowValueTarget}
+				id="lowValueTarget" />
+		</div>
+		<Rarities label="High Value MV Thresholds" bind:rarities={localStorageObject.highValueThresholds} />
 		<FormInput bind:bindValue={localStorageObject.giftOverMVValue} id="giftOverMVValue" label="MV" />
-		<FormSelect
-			id="findermode"
-			label="Behavior"
-			bind:bindValue={localStorageObject.finderMode}
-			items={['Gift', 'Sell', 'Exclude']} />
+		{#if localStorageObject.findMode !== '1949 Shanghai Mode'}
+			<FormSelect
+				id="findermode"
+				label="Behavior"
+				bind:bindValue={localStorageObject.finderMode}
+				items={['Gift', 'Sell', 'Exclude']} />
+		{/if}
 		<FormTextArea label="Card IDs to Find" bind:bindValue={localStorageObject.finderList} id="find" />
+		<FormTextArea label="Exclusion Nations" bind:bindValue={localStorageObject.exclusionNations} id="exclusion" />
 		<FormTextArea label="Keep X Copy" bind:bindValue={localStorageObject.keepOne} id="keepOne" />
 		<h2 class="text-center text-2xl font-bold tracking-tight">Flags</h2>
 		<FormSelect
