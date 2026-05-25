@@ -16,6 +16,7 @@
 	const localStorageObject: { [key: string]: any } = $state({
 		connectionUrl: 'www',
 		theme: 'system',
+		casUrl: '',
 		puppets: '',
 		main: '',
 		password: '',
@@ -196,6 +197,13 @@
 			subTitle={localStorageObject.puppets.includes(',')
 				? 'A comma is detected in the puppet list, assuming that format.'
 				: ''} />
+		<FormInput
+			id="casUrl"
+			bind:bindValue={localStorageObject.casUrl}
+			type="url"
+			label="CAS URL (optional)"
+			subTitle="Coordinated Allocation Server for NS API rate limiting across devices"
+			required={false} />
 		<h2 class="text-center text-2xl font-bold tracking-tight">gotIssues and junkDaJunk</h2>
 		<FormTextArea label="Puppets" bind:bindValue={localStorageObject.gotissuesPuppets} id="gipup" />
 		<h2 class="text-center text-2xl font-bold tracking-tight">gotIssues</h2>
