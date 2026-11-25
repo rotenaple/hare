@@ -1,13 +1,22 @@
-<script lang="ts">
+<script
+	lang="ts"
+	generics="T extends { url: string; tableText: string; linkStyle?: string } = { url: string; tableText: string; linkStyle?: string }">
 	import Button from '$lib/components/ui/button/button.svelte'
 
 	interface Props {
 		progress?: Array<{ text: string; color?: string }>
-		openNewLinkArr?: Array<{ url: string; tableText: string; linkStyle?: string }>
+		openNewLinkArr?: T[]
 		stopped?: boolean
 		stoppable?: boolean
+		onOpen?: (item: T) => void
 	}
-	let { progress = $bindable([]), openNewLinkArr = $bindable([]), stopped = false, stoppable = false }: Props = $props()
+	let {
+		progress = $bindable([]),
+		openNewLinkArr = $bindable([]),
+		stopped = false,
+		stoppable = false,
+		onOpen,
+	}: Props = $props()
 	let openedCount = $state(0)
 	let busy = $state(false)
 	let lastNation = $state('')
@@ -25,10 +34,12 @@
 		if (nation !== lastNation && busy) return
 		if (lastNation === '') busy = false
 		lastNation = nation
-		openedWindow = window.open(openNewLinkArr[0].url, '_blank')
+		const item = openNewLinkArr[0]
+		openedWindow = window.open(item.url, '_blank')
 		openedCount++
 		openNewLinkArr.splice(0, 1)
 		busy = true
+		onOpen?.(item)
 	}
 
 	$effect(() => {
@@ -50,10 +61,10 @@
 	})
 
 	$effect(() => {
-		stopped
-		stoppable
-		busy = false
-		lastNation = ''
+		if (stopped || stoppable) {
+			busy = false
+			lastNation = ''
+		}
 	})
 
 	$effect(() => {
