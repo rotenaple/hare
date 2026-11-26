@@ -25,6 +25,7 @@
 		gotissuesMinPack: '0',
 		gotissuesAutoclosePacks: true,
 		gotissuesFetchOnDemand: false,
+		gotissuesBufferIssues: '20',
 		rocTop: '100',
 		rocDays: '30',
 		rocSpecific: '',
@@ -221,6 +222,12 @@
 			bind:checked={localStorageObject.gotissuesFetchOnDemand}
 			id="gifetchondemand"
 			label="Fetch on Demand" />
+		<FormInput
+			id="gibufferissues"
+			label="Buffer Issues"
+			type="number"
+			subTitle="Issues to keep buffered ahead when Fetch on Demand is enabled."
+			bind:bindValue={localStorageObject.gotissuesBufferIssues} />
 		<h2 class="text-center text-2xl font-bold tracking-tight">Rate of Change</h2>
 		<FormInput label="Top {localStorageObject.rocTop}" bind:bindValue={localStorageObject.rocTop} id="top" />
 		<FormInput label="Over {localStorageObject.rocDays} Days" bind:bindValue={localStorageObject.rocDays} id="days" />

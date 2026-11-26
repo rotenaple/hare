@@ -4,6 +4,7 @@
 	import Buttons from '$lib/components/Buttons.svelte'
 	import OpenButton from '$lib/components/buttons/OpenButton.svelte'
 	import FormCheckbox from '$lib/components/FormCheckbox.svelte'
+	import FormInput from '$lib/components/FormInput.svelte'
 	import FormSelect from '$lib/components/FormSelect.svelte'
 	import InputCredentials from '$lib/components/InputCredentials.svelte'
 	import Terminal from '$lib/components/Terminal.svelte'
@@ -15,7 +16,7 @@
 	type QueuedLink = { url: string; tableText: string; linkStyle?: string; nationIndex?: number }
 	type Puppet = { nation: string; password: string }
 
-	const BUFFER_AHEAD = 5
+	const DEFAULT_BUFFER_ISSUES = '20'
 
 	const abortController = new AbortController()
 	let domain = ''
@@ -35,13 +36,21 @@
 	let minPack = $state('0')
 	let autoclosepacks = $state(true)
 	let fetchOnDemand = $state(false)
+	let bufferIssues = $state(DEFAULT_BUFFER_ISSUES)
 	let errors: Array<{ field: string | number; message: string }> = $state([])
 	let testmode: string | null
 
 	let puppetList: Array<Puppet> = []
-	let runConfig = { main: '', password: '', mode: 'Both', issueCount: '5', packCount: '9', minPack: '0' }
+	let runConfig = {
+		main: '',
+		password: '',
+		mode: 'Both',
+		issueCount: '5',
+		packCount: '9',
+		minPack: '0',
+		bufferIssues: DEFAULT_BUFFER_ISSUES,
+	}
 	let nextNationIndex = 0
-	let currentNationIndex = 0
 	let issuesCount = 0
 	let packsCount = 0
 	let onDemandRun = false
@@ -61,6 +70,10 @@
 		fetchOnDemand =
 			(page.url.searchParams.get('fetchOnDemand') ?? (localStorage.getItem('gotissuesFetchOnDemand') as string)) ===
 			'true'
+		bufferIssues =
+			page.url.searchParams.get('buffer') ||
+			(localStorage.getItem('gotissuesBufferIssues') as string) ||
+			DEFAULT_BUFFER_ISSUES
 		testmode = page.url.searchParams.get('test')
 		autoclosepacks = Boolean(
 			page.url.searchParams.get('autoclosepacks') || localStorage.getItem('gotissuesAutoclosePacks') || true
@@ -168,15 +181,20 @@
 		return packLinks
 	}
 
+	function bufferedAhead(): number {
+		const linkText = runConfig.mode === 'Packs' ? 'Link to Pack' : 'Link to Issue'
+		return content.filter(item => item.tableText === linkText).length
+	}
+
 	async function refillQueue(run: number) {
 		if (!onDemandRun || fetching || stopped || run !== runId) return
 		fetching = true
 		let fetchedAny = false
+		const bufferTarget = Math.max(1, Number(runConfig.bufferIssues) || Number(DEFAULT_BUFFER_ISSUES))
 		try {
 			while (run === runId && !stopped && !abortController.signal.aborted && nextNationIndex < puppetList.length) {
-				const withinBuffer = nextNationIndex <= currentNationIndex + BUFFER_AHEAD
 				const needsFirstLink = content.length === 0
-				if (!withinBuffer && !needsFirstLink) break
+				if (!needsFirstLink && bufferedAhead() >= bufferTarget) break
 
 				if (!fetchedAny) {
 					fetchedAny = true
@@ -216,18 +234,15 @@
 		}
 	}
 
-	function handleOpen(item: QueuedLink) {
+	function handleOpen() {
 		if (!onDemandRun) return
-		if (typeof item.nationIndex === 'number') {
-			currentNationIndex = Math.max(currentNationIndex, item.nationIndex)
-		}
 		void refillQueue(runId)
 	}
 
 	async function onSubmit(e: Event) {
 		e.preventDefault()
 		pushHistory(
-			`?main=${main}&mode=${mode}${mode === 'Issues' ? `&count=${issueCount}` : mode === 'Packs' ? `&packCount=${packCount}&minPack=${minPack}` : `&count=${issueCount}&packCount=${packCount}&minPack=${minPack}&autoclose=${autoclosepacks}`}&fetchOnDemand=${fetchOnDemand}${testmode ? `&test=${testmode}` : ''}`
+			`?main=${main}&mode=${mode}${mode === 'Issues' ? `&count=${issueCount}` : mode === 'Packs' ? `&packCount=${packCount}&minPack=${minPack}` : `&count=${issueCount}&packCount=${packCount}&minPack=${minPack}&autoclose=${autoclosepacks}`}&fetchOnDemand=${fetchOnDemand}&buffer=${bufferIssues}${testmode ? `&test=${testmode}` : ''}`
 		)
 		errors = checkUserAgent(main)
 		if (errors.length > 0) return
@@ -254,18 +269,19 @@
 			issueCount,
 			packCount: packCount === 'All' ? '9' : packCount,
 			minPack,
+			bufferIssues,
 		}
 		onDemandRun = fetchOnDemand
 		nextNationIndex = 0
-		currentNationIndex = 0
 		issuesCount = 0
 		packsCount = 0
 
 		if (onDemandRun) {
+			const bufferUnit = mode === 'Packs' ? 'packs' : 'issues'
 			info = [
 				...info,
 				{
-					text: `Fetch on Demand enabled, buffering ${BUFFER_AHEAD} nations ahead.`,
+					text: `Fetch on Demand enabled, buffering ${runConfig.bufferIssues} ${bufferUnit} ahead.`,
 					color: 'blue',
 				},
 			]
@@ -312,7 +328,7 @@
 	Password input is optional and will be disabled if the puppet list includes a comma for nation,password.
 </p>
 <p class="text-xs mb-16">
-	Fetch on Demand only loads ${BUFFER_AHEAD} nations ahead as you open links instead of fetching everything up front.
+	Fetch on Demand only buffers ${bufferIssues} ${mode === 'Packs' ? 'packs' : 'issues'} ahead as you open links instead of fetching everything up front.
 	Sheet downloads are disabled in this mode.
 </p>`} />
 
@@ -341,8 +357,17 @@
 			bind:checked={fetchOnDemand}
 			id="fetchOnDemand"
 			label="Fetch on Demand"
-			subTitle={`Only fetch ${BUFFER_AHEAD} nations ahead as you open links.`}
+			subTitle={`Only buffer ${bufferIssues} ${mode === 'Packs' ? 'packs' : 'issues'} ahead as you open links.`}
 			disabled={stoppable} />
+		{#if fetchOnDemand}
+			<FormInput
+				id="bufferIssues"
+				label="Buffer Issues"
+				type="number"
+				subTitle={`How many ${mode === 'Packs' ? 'packs' : 'issues'} to keep buffered ahead of the link you are opening.`}
+				bind:bindValue={bufferIssues}
+				disabled={stoppable} />
+		{/if}
 		<Buttons
 			stopButton={true}
 			bind:stopped
