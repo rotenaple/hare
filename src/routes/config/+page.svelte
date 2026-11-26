@@ -25,6 +25,7 @@
 		gotissuesPackCount: 'All',
 		gotissuesMinPack: '0',
 		gotissuesAutoclosePacks: true,
+		gotissuesFetchOnDemand: false,
 		rocTop: '100',
 		rocDays: '30',
 		rocSpecific: '',
@@ -85,7 +86,7 @@
 
 	onMount(() => {
 		Object.keys(localStorageObject).forEach(key => {
-			if (key === 'junkdajunkExnation' || key === 'auctionTransferIncomplete') {
+			if (key === 'junkdajunkExnation' || key === 'auctionTransferIncomplete' || key === 'gotissuesFetchOnDemand') {
 				localStorageObject[key] = localStorage.getItem(key) === 'true'
 			} else {
 				localStorageObject[key] = localStorage.getItem(key) || localStorageObject[key]
@@ -225,6 +226,10 @@
 			bind:checked={localStorageObject.gotissuesAutoclosePacks}
 			id="autoclosepacks"
 			label="Autoclose Packs" />
+		<FormCheckbox
+			bind:checked={localStorageObject.gotissuesFetchOnDemand}
+			id="gifetchondemand"
+			label="Fetch on Demand" />
 		<h2 class="text-center text-2xl font-bold tracking-tight">Rate of Change</h2>
 		<FormInput label="Top {localStorageObject.rocTop}" bind:bindValue={localStorageObject.rocTop} id="top" />
 		<FormInput label="Over {localStorageObject.rocDays} Days" bind:bindValue={localStorageObject.rocDays} id="days" />
