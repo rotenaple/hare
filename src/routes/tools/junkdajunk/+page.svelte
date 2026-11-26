@@ -3,7 +3,6 @@
 	import { page } from '$app/state'
 	import Buttons from '$lib/components/Buttons.svelte'
 	import OpenButton from '$lib/components/buttons/OpenButton.svelte'
-	import FormCheckbox from '$lib/components/FormCheckbox.svelte'
 	import FormInput from '$lib/components/FormInput.svelte'
 	import FormSelect from '$lib/components/FormSelect.svelte'
 	import FormTextArea from '$lib/components/FormTextArea.svelte'
@@ -14,15 +13,20 @@
 	import ToolContent from '$lib/components/ToolContent.svelte'
 	import * as AlertDialog from '$lib/components/ui/alert-dialog'
 	import Button from '$lib/components/ui/button/button.svelte'
+	import { cardListEntryMatches, parseCardList } from '$lib/helpers/cardList'
 	import { giftCard } from '$lib/helpers/gift'
-	import { parseXML } from '$lib/helpers/parser'
+	import { parseXML, sleep } from '$lib/helpers/parser'
 	import {
 		evaluateRule,
+		getRuleFlagCacheKeys,
 		getRuleRegionCacheKeys,
 		getRuleSummary,
-		ruleRequiresCardDetails,
+		isFlagCacheableCondition,
+		isRegionCacheableCondition,
+		ruleNeedsCardDetailsForCard,
 		type Action,
 		type AdvancedRuleData,
+		type Condition,
 		type Rule,
 	} from '$lib/helpers/rules'
 	import {
@@ -55,7 +59,6 @@
 	let password = $state('')
 	let owners = $state('')
 	let cardcount = $state('')
-	let junkMethod = $state('API')
 	let checkMode = $state('Advanced')
 	let raritiesMV: Prices = $state(defaultPrices)
 	let raritiesLowestBid: Prices = $state(defaultPrices)
@@ -76,6 +79,8 @@
 		cards?: Array<{ id: number }>
 	}
 
+	const cardSeasons = ['1', '2', '3', '4']
+
 	$effect(() => {
 		if (rulesLoaded) localStorage.setItem('junkdajunkRules', JSON.stringify(rules))
 	})
@@ -85,17 +90,20 @@
 	})
 
 	onMount(() => {
-		domain = `https://${localStorage.getItem('connectionUrl') || 'www'}.nationstates.net`
+		domain = `https://www.nationstates.net`
 		main = page.url.searchParams.get('main') || (localStorage.getItem('main') as string) || ''
 		puppets = (localStorage.getItem('gotissuesPuppets') as string) || ''
 		password = (localStorage.getItem('password') as string) || ''
+		configMode =
+			page.url.searchParams.get('configMode') === 'Rules'
+				? 'Rules'
+				: localStorage.getItem('junkdajunkConfigMode') || 'Classic'
 		mode =
 			page.url.searchParams.get('mode') ||
 			(localStorage.getItem('jdjMode') as string) ||
 			(localStorage.getItem('finderMode') as string) ||
 			'Gift'
 		checkMode = page.url.searchParams.get('checkMode') || (localStorage.getItem('jdjCheckMode') as string) || 'Advanced'
-		junkMethod = page.url.searchParams.get('junk') || (localStorage.getItem('junkMethod') as string) || 'API'
 		regionalwhitelist =
 			page.url.searchParams.get('regions')?.replaceAll(',', '\n') ||
 			(localStorage.getItem('junkdajunkRegionalWhitelist') as string) ||
@@ -125,37 +133,14 @@
 			: defaultPrices
 		owners = page.url.searchParams.get('owners') || (localStorage.getItem('junkdajunkOwnerCount') as string) || ''
 		cardcount = page.url.searchParams.get('cardcount') || (localStorage.getItem('junkdajunkCardCount') as string) || ''
-		if (page.url.searchParams.get('skipseason') !== null) {
-			if (
-				(page.url.searchParams.get('skipseason') as string) === "Don't Skip" ||
-				(page.url.searchParams.get('skipseason') as string) === 'Skip Offseasons'
-			) {
-				alert(`${page.url.searchParams.get('skipseason')} is no longer in use, please change it`)
-				skipseason = []
-			} else {
-				skipseason = [page.url.searchParams.get('skipseason') as string]
-			}
-		} else if (localStorage.getItem('junkdajunkOmittedSeasons')) {
-			if (
-				localStorage.getItem('junkdajunkOmittedSeasons') === "Don't Skip" ||
-				localStorage.getItem('junkdajunkOmittedSeasons') === 'Skip Offseasons'
-			) {
-				alert(`${localStorage.getItem('junkdajunkOmittedSeasons')} is no longer in use, please change it`)
-				skipseason = []
-			} else {
-				skipseason = [localStorage.getItem('junkdajunkOmittedSeasons') as string]
-			}
-		} else {
-			skipseason = []
-		}
+		const validSeasons = new Set(cardSeasons)
+		const rawSeasons = page.url.searchParams.get('skipseason') ?? localStorage.getItem('junkdajunkOmittedSeasons') ?? ''
+		skipseason = Array.from(new Set(rawSeasons.split(',').filter(s => validSeasons.has(s))))
 		skipexnation =
 			page.url.searchParams.get('skipexnation') === 'true' ||
 			localStorage.getItem('junkdajunkExnation') === 'true' ||
 			false
-		// jdjtransfer =
-		// 	page.url.searchParams.get('jdjtransfer') || (localStorage.getItem('junkdajunkTransferBank') as string) || '-1'
 		junkUpTo = page.url.searchParams.get('junkUpTo') || (localStorage.getItem('junkUpTo') as string) || '-1'
-		configMode = localStorage.getItem('junkdajunkConfigMode') || 'Classic'
 		try {
 			const savedRules = localStorage.getItem('junkdajunkRules')
 			if (savedRules) rules = JSON.parse(savedRules)
@@ -167,38 +152,131 @@
 	})
 	onDestroy(() => abortController.abort())
 
-	async function fetchKotamaCardIds(clause: string, from?: string): Promise<Set<number>> {
+	async function fetchKotamaCardIds(clause: string, season: string): Promise<Set<string>> {
 		const params = new URLSearchParams({
 			select: 'min',
 			clauses: clause,
 			ua: main,
 			limit: '252525252525',
+			from: `S${season}`,
 		})
-		if (from) params.set('from', from)
 		const response = await fetch(`https://kotama.kractero.com/api?${params}`, {
 			signal: abortController.signal,
 		})
 		if (!response.ok) throw new Error(`Kotama returned ${response.status} for ${clause}`)
 		const data: KotamaCardList = await response.json()
-		return new Set((data.cards || []).map(card => Number(card.id)))
+		return new Set((data.cards || []).map(card => `${Number(card.id)},${season}`))
 	}
 
-	async function fetchKotamaCardIdCache(
-		entries: { key: string; clause: string; from?: string }[]
-	): Promise<Map<string, Set<number>>> {
-		const cardIds = new Map<string, Set<number>>()
+	async function fetchKotamaCardIdCache(entries: { key: string; clause: string }[]): Promise<Map<string, Set<string>>> {
+		const cardIds = new Map<string, Set<string>>()
 		if (entries.length === 0) return cardIds
 
 		progress = [...progress, { text: `Fetching card IDs for ${entries.length} checks...` }]
 
-		for (const { key, clause, from } of entries) {
+		for (const { key, clause } of entries) {
+			const ids = new Set<string>()
+			for (const season of cardSeasons) {
+				if (abortController.signal.aborted || stopped) break
+				const seasonalIds = await fetchKotamaCardIds(clause, season)
+				seasonalIds.forEach(id => ids.add(id))
+				await sleep(0.6)
+			}
 			if (abortController.signal.aborted || stopped) break
-			const ids = await fetchKotamaCardIds(clause, from)
 			cardIds.set(key, ids)
 			progress = [...progress, { text: `Cached ${ids.size} cards for ${key}` }]
 		}
 
 		return cardIds
+	}
+
+	function sortCardIds(cardIds: string[]): string[] {
+		return cardIds.sort((a, b) => {
+			const [aId, aSeason] = a.split(',').map(Number)
+			const [bId, bSeason] = b.split(',').map(Number)
+			return aSeason - bSeason || aId - bId
+		})
+	}
+
+	function rewriteCachedRulesWithCardIds(
+		sourceRules: Rule[],
+		cardIdsByKey: Map<string, Set<string>>,
+		isCacheableCondition: (condition: Condition) => boolean,
+		normalize: (value: string) => string
+	): Rule[] {
+		let changed = false
+
+		const rewrittenRules = sourceRules.map(rule => {
+			if (!rule.enabled) return rule
+			const originalSummary = getRuleSummary(rule)
+			let ruleChanged = false
+
+			const conditions = rule.conditions.map(condition => {
+				if (!isCacheableCondition(condition)) return condition
+
+				const keys = ['in list', 'not in list'].includes(condition.operator)
+					? condition.value
+							.split(/[\n,]+/)
+							.map(value => normalize(value))
+							.filter(Boolean)
+					: [normalize(condition.value)].filter(Boolean)
+				const ids = new Set<string>()
+				keys.forEach(key => cardIdsByKey.get(key)?.forEach(id => ids.add(id)))
+				changed = true
+				ruleChanged = true
+
+				return {
+					...condition,
+					attribute: 'Card ID' as const,
+					operator: ['=', 'in list'].includes(condition.operator) ? ('in list' as const) : ('not in list' as const),
+					value: sortCardIds([...ids]).join('\n'),
+				}
+			})
+
+			return ruleChanged ? { ...rule, name: rule.name || originalSummary, conditions } : rule
+		})
+
+		return changed ? rewrittenRules : sourceRules
+	}
+
+	function rewriteRegionRulesWithCardIds(sourceRules: Rule[], regionCardIds: Map<string, Set<string>>): Rule[] {
+		return rewriteCachedRulesWithCardIds(sourceRules, regionCardIds, isRegionCacheableCondition, canonicalize)
+	}
+
+	function rewriteFlagRulesWithCardIds(sourceRules: Rule[], flagCardIds: Map<string, Set<string>>): Rule[] {
+		return rewriteCachedRulesWithCardIds(sourceRules, flagCardIds, isFlagCacheableCondition, flag => flag.trim())
+	}
+
+	function findCommaSeparatedCardIdRule(rulesToCheck: Rule[]): number | undefined {
+		const ruleIndex = rulesToCheck.findIndex(
+			rule =>
+				rule.enabled &&
+				rule.conditions.some(condition => {
+					if (condition.attribute !== 'Card ID' || !['in list', 'not in list'].includes(condition.operator))
+						return false
+					return condition.value
+						.split('\n')
+						.map(line => line.trim())
+						.filter(Boolean)
+						.some(line => {
+							const parts = line
+								.split(',')
+								.map(part => part.trim())
+								.filter(Boolean)
+							return parts.length > 1 && !(parts.length === 2 && cardSeasons.includes(parts[1]))
+						})
+				})
+		)
+		return ruleIndex === -1 ? undefined : ruleIndex
+	}
+
+	const rarityBank: Record<string, number> = {
+		common: 0.01,
+		uncommon: 0.05,
+		rare: 0.1,
+		'ultra-rare': 0.2,
+		epic: 0.5,
+		legendary: 1,
 	}
 
 	async function onSubmit(e: Event) {
@@ -207,9 +285,21 @@
 			return
 		}
 		e.preventDefault()
-		pushHistory(
-			`?main=${main}&mode=${mode}&junkMethod=${junkMethod}&checkMode=${checkMode}${giftee ? `&giftee=${giftee.split('\n').join(',')}` : ''}${owners ? `&owners=${owners}` : ''}${cardcount ? `&cardcount=${cardcount}` : ''}${regionalwhitelist ? `&regions=${regionalwhitelist.replaceAll('\n', ',')}` : ''}${flagwhitelist ? `&flags=${flagwhitelist.replaceAll('\n', ',')}` : ''}${skipseason && skipseason.length > 0 ? `&skipseason=${skipseason}` : ''}${skipexnation ? `&skipexnation=${skipexnation}` : ''}${junkUpTo ? `&junkUpTo=${junkUpTo}` : ''}`
-		)
+		const classicMode = configMode === 'Classic'
+		const historyParams = new URLSearchParams({ main, configMode })
+		if (junkUpTo) historyParams.set('junkUpTo', junkUpTo)
+		if (classicMode) {
+			historyParams.set('mode', mode)
+			historyParams.set('checkMode', checkMode)
+			if (giftee) historyParams.set('giftee', giftee.split('\n').join(','))
+			if (owners) historyParams.set('owners', owners)
+			if (cardcount) historyParams.set('cardcount', cardcount)
+			if (regionalwhitelist) historyParams.set('regions', regionalwhitelist.replaceAll('\n', ','))
+			if (flagwhitelist) historyParams.set('flags', flagwhitelist.replaceAll('\n', ','))
+			if (skipseason && skipseason.length > 0) historyParams.set('skipseason', skipseason.join(','))
+			if (skipexnation) historyParams.set('skipexnation', String(skipexnation))
+		}
+		pushHistory(`?${historyParams.toString()}`)
 		errors = checkUserAgent(main)
 		if (errors.length > 0) return
 		window.addEventListener('beforeunload', beforeUnload)
@@ -223,27 +313,32 @@
 		let puppetList = puppets.split('\n')
 		const newInfo = []
 
-		newInfo.push({ text: `Initiating JunkDaJunk with ${checkMode} ${junkMethod} ${mode}` })
+		newInfo.push({
+			text: classicMode
+				? `Initiating JunkDaJunk with ${checkMode} ${mode}`
+				: `Initiating JunkDaJunk with Rules`,
+		})
 
-		const regionalWhitelist = regionalwhitelist ? regionalwhitelist.split('\n').map(region => canonicalize(region)) : []
+		const regionalWhitelist =
+			classicMode && regionalwhitelist ? regionalwhitelist.split('\n').map(region => canonicalize(region)) : []
 		if (regionalWhitelist.length > 0) {
 			newInfo.push({ text: `Whitelisting regions: ${regionalWhitelist.map(region => region.trim()).join(', ')}` })
 		}
-		const flagWhitelist = flagwhitelist ? flagwhitelist.split('\n') : []
+		const flagWhitelist = classicMode && flagwhitelist ? flagwhitelist.split('\n') : []
 		if (flagWhitelist.length > 0) {
 			newInfo.push({ text: `Whitelisting flags: ${flagWhitelist.map(flag => flag.trim()).join(', ')}` })
 		}
 
-		if (finderlist) {
+		if (classicMode && finderlist) {
 			const count = finderlist.split('\n').filter(Boolean).length
 			if (count > 0) {
 				newInfo.push({ text: `Whitelisting cards: ${count} cards whitelisted` })
 			}
 		}
 
-		if (skipseason && skipseason.length > 0) newInfo.push({ text: `Skipping seasons: ${skipseason}` })
+		if (classicMode && skipseason && skipseason.length > 0) newInfo.push({ text: `Skipping seasons: ${skipseason}` })
 
-		if (skipexnation === true) newInfo.push({ text: `Skipping s1 exnations` })
+		if (classicMode && skipexnation === true) newInfo.push({ text: `Skipping s1 exnations` })
 
 		// for (const [rarity, threshold] of Object.entries(raritiesMV))
 		// 	newInfo.push({ text: `${rarity} junk threshold at ${threshold}` })
@@ -251,17 +346,37 @@
 		// for (const [rarity, bid] of Object.entries(raritiesLowestBid))
 		// 	newInfo.push({ text: `${rarity} junk threshold at ${bid}` })
 
-		const findSplit = finderlist.split('\n').map(matcher => matcher.split(','))
+		const classicWhitelistEntries = classicMode ? parseCardList(finderlist) : []
+		const whitelistSet = new Set(classicWhitelistEntries.map(f => `${f.id},${f.season || ''}`))
 
 		info = newInfo
+
+		if (configMode === 'Rules') {
+			const commaSeparatedRuleIndex = findCommaSeparatedCardIdRule(rules)
+			if (commaSeparatedRuleIndex !== undefined) {
+				info = [
+					...info,
+					{
+						text: `Rule ${commaSeparatedRuleIndex + 1} looks like it uses comma-separated Card ID values. Put one card per line, optionally as id,season.`,
+						color: 'red',
+					},
+				]
+				stoppable = false
+				window.removeEventListener('beforeunload', beforeUnload)
+				return
+			}
+		}
 
 		let junkedCards = 0
 		let giftedCards = 0
 		let actionCount = 0
+		let junkRarityCounts: Record<string, number> = {}
+		let junkBankTotal = 0
+		let skippedCount = 0
 		let currCard = 0
 		let currSellCard = 0
-		let regionCardIds = new Map<string, Set<number>>()
-		let flagCardIds = new Map<string, Set<number>>()
+		let regionCardIds = new Map<string, Set<string>>()
+		let flagCardIds = new Map<string, Set<string>>()
 
 		let gifteeQueue = giftee
 			.split('\n')
@@ -270,20 +385,27 @@
 
 		try {
 			if (configMode === 'Rules') {
-				const regions = [...new Set(rules.filter(r => r.enabled).flatMap(r => getRuleRegionCacheKeys(r)))]
+				const enabledRules = rules.filter(r => r.enabled)
+				const regions = [...new Set(enabledRules.flatMap(getRuleRegionCacheKeys))]
+				const flags = [...new Set(enabledRules.flatMap(getRuleFlagCacheKeys))]
 				regionCardIds = await fetchKotamaCardIdCache(
 					regions.map(r => ({ key: r, clause: `region-IS-${r.replaceAll('_', ' ')}` }))
 				)
-			} else if (regionalWhitelist.length > 0) {
-				regionCardIds = await fetchKotamaCardIdCache(
-					regionalWhitelist.map(r => ({ key: r, clause: `region-IS-${r.replaceAll('_', ' ')}` }))
-				)
+				rules = rewriteRegionRulesWithCardIds(rules, regionCardIds)
+				flagCardIds = await fetchKotamaCardIdCache(flags.map(f => ({ key: f, clause: `flag-IS-${f}` })))
+				rules = rewriteFlagRulesWithCardIds(rules, flagCardIds)
+			} else {
+				if (regionalWhitelist.length > 0) {
+					regionCardIds = await fetchKotamaCardIdCache(
+						regionalWhitelist.map(r => ({ key: r, clause: `region-IS-${r.replaceAll('_', ' ')}` }))
+					)
+				}
 				if (flagWhitelist.length > 0) {
 					flagCardIds = await fetchKotamaCardIdCache(flagWhitelist.map(f => ({ key: f, clause: `flag-IS-${f}` })))
 				}
 			}
 		} catch (err) {
-			info = [...info, { text: `Error fetching region card lists: ${err}`, color: 'red' }]
+			info = [...info, { text: `Error fetching cached card lists: ${err}`, color: 'red' }]
 			stoppable = false
 			window.removeEventListener('beforeunload', beforeUnload)
 			return
@@ -324,17 +446,26 @@
 						let reason = ''
 						let giftTarget = ''
 
+						if (classicMode && whitelistSet.has(`${id},${season}`)) {
+							progress = [
+								...progress,
+								{ text: `${j + 1}/${cards.length} -> Skipping S${season} ${id} - whitelisted`, color: 'blue' },
+							]
+							skippedCount++
+							continue
+						}
+
 						if (configMode === 'Rules') {
 							let advancedDataFetched = false
-							let advancedData: AdvancedRuleData = { regionCardIds }
+							let advancedData: AdvancedRuleData = { regionCardIds, flagCardIds }
 							let matchedActions: Action[] = []
 							let matchedRuleSummary = ''
 
 							for (const rule of rules) {
 								if (!rule.enabled) continue
 
-								if (ruleRequiresCardDetails(rule) && !advancedDataFetched) {
-									// only fetch full card details if JDJ hits a rule that needs data not covered by the region cache
+								if (ruleNeedsCardDetailsForCard(rule, cards[j], advancedData) && !advancedDataFetched) {
+									// only fetch full card details if JDJ hits a rule that needs data not covered by caches
 									// skips requests if earlier rules already matched
 									const cardDetailsXml = await parseXML(
 										`${domain}/cgi-bin/api.cgi?cardid=${id}&season=${season}&q=card+markets+info+owners`,
@@ -368,6 +499,7 @@
 
 									advancedData = {
 										regionCardIds,
+										flagCardIds,
 										region,
 										flag,
 										bid: highestBid,
@@ -406,6 +538,7 @@
 										color: 'gray',
 									},
 								]
+								skippedCount++
 								junk = false
 								sell = false
 							} else if (giftTarget) {
@@ -446,6 +579,7 @@
 										color: 'gray',
 									},
 								]
+								skippedCount++
 								junk = false
 								sell = false
 							}
@@ -465,11 +599,14 @@
 									reason: `category set to gift`,
 								},
 								{
-									check: () => regionCardIds.size > 0 && [...regionCardIds.values()].some(set => set.has(Number(id))),
+									check: () =>
+										regionCardIds.size > 0 &&
+										[...regionCardIds.values()].some(set => set.has(`${Number(id)},${season}`)),
 									reason: `is in whitelisted region`,
 								},
 								{
-									check: () => flagCardIds.size > 0 && [...flagCardIds.values()].some(set => set.has(Number(id))),
+									check: () =>
+										flagCardIds.size > 0 && [...flagCardIds.values()].some(set => set.has(`${Number(id)},${season}`)),
 									reason: `is in whitelisted flag`,
 								},
 								{
@@ -556,81 +693,58 @@
 								}
 							}
 
-							findSplit.forEach(findid => {
-								const matchSeason = findid[1]
-								if (findid[0] === String(id)) {
-									if (matchSeason) {
-										if (matchSeason === String(season)) {
-											junk = false
-											reason = `is whitelisted card ${findid[0]} season ${season}`
-										}
-									} else {
-										junk = false
-										reason = `is whitelisted card ${findid}`
-									}
+							classicWhitelistEntries.forEach(findid => {
+								if (cardListEntryMatches(findid, id, season)) {
+									junk = false
+									reason = findid.season
+										? `is whitelisted card ${findid.id} season ${season}`
+										: `is whitelisted card ${findid.id}`
 								}
 							})
 						}
 
 						if (junk && sell) {
-							if (junkMethod === 'Manual') {
-								progress = [
-									...progress,
-									{
-										text: `${j + 1}/${
-											cards.length
-										} -> Adding to junk sheet S${season} ${category.toUpperCase()} ${id} with mv ${marketValue}`,
-									},
-								]
+							progress = [
+								...progress,
+								{
+									text: `${j + 1}/${
+										cards.length
+									} -> Junking S${season} ${category.toUpperCase()} ${id} with mv ${marketValue}`,
+								},
+							]
+							let token = ''
+							const url = `${domain}/cgi-bin/api.cgi?nation=${nation}&cardid=${id}&season=${season}&mode=`
+							const prepare = await parseXML(
+								`${url}prepare&c=junkcard`,
+								main,
+								currentNationXPin ? '' : nationSpecificPassword ? nationSpecificPassword : password,
+								currentNationXPin || ''
+							)
+
+							if (!currentNationXPin) currentNationXPin = prepare['x-pin'] || ''
+
+							token = prepare.NATION.SUCCESS
+
+							const junkResponse = await parseXML(
+								`${url}execute&c=junkcard&token=${token}`,
+								main,
+								'',
+								currentNationXPin
+							)
+
+							if (junkResponse.NATION && junkResponse.NATION.ERROR) {
+								info = [...info, { text: `${nation} failed to junk ${id}, adding to sheet`, color: 'red' }]
 								content.push({
 									url: `${domain}/container=${nation}/nation=${nation}/page=ajax3/a=junkcard/card=${id}/season=${season}?${urlParameters('junkDaJunk', main)}&autoclose=1`,
 									tableText: `Link to Junk`,
 								})
 								currCard = currCard + 1
 							} else {
-								progress = [
-									...progress,
-									{
-										text: `${j + 1}/${
-											cards.length
-										} -> Junking S${season} ${category.toUpperCase()} ${id} with mv ${marketValue}`,
-									},
-								]
-								let token = ''
-								const url = `${domain}/cgi-bin/api.cgi?nation=${nation}&cardid=${id}&season=${season}&mode=`
-								const prepare = await parseXML(
-									`${url}prepare&c=junkcard`,
-									main,
-									currentNationXPin ? '' : nationSpecificPassword ? nationSpecificPassword : password,
-									currentNationXPin || ''
-								)
-
-								if (!currentNationXPin) currentNationXPin = prepare['x-pin'] || ''
-
-								token = prepare.NATION.SUCCESS
-
-								const junkResponse = await parseXML(
-									`${url}execute&c=junkcard&token=${token}`,
-									main,
-									'',
-									currentNationXPin
-								)
-
-								if (junkResponse.NATION && junkResponse.NATION.ERROR) {
-									info = [...info, { text: `${nation} failed to junk ${id}, adding to sheet`, color: 'red' }]
-									content.push({
-										url: `${domain}/container=${nation}/nation=${nation}/page=ajax3/a=junkcard/card=${id}/season=${season}?${urlParameters('junkDaJunk', main)}&autoclose=1`,
-										tableText: `Link to Junk`,
-									})
-									currCard = currCard + 1
-								} else {
-									junkedCards = junkedCards + 1
-									actionCount = actionCount + 1
-									junkCounter =
-										junkMethod === 'API'
-											? `API has junked ${junkedCards}. API has gifted ${giftedCards}. API has processed ${junkedCards + giftedCards} in total.`
-											: ''
-								}
+								junkedCards = junkedCards + 1
+								junkRarityCounts[category] = (junkRarityCounts[category] || 0) + 1
+								junkBankTotal += rarityBank[category] ?? 0
+								actionCount = actionCount + 1
+								junkCounter = `API has junked ${junkedCards}. API has gifted ${giftedCards}. API has processed ${junkedCards + giftedCards} in total.`
 							}
 						} else {
 							if (configMode === 'Rules') {
@@ -643,6 +757,7 @@
 												color: 'blue',
 											},
 										]
+										skippedCount++
 									}
 									const activeNation = giftTarget ? giftTarget : nation
 									sellContent.push({
@@ -655,9 +770,9 @@
 								// Classic Mode
 								if (mode === 'Gift' || (mode === 'Gift and Sell' && sell === true)) {
 									let giftto = gifteeQueue[0]
-									findSplit.forEach(findid => {
-										const matchGiftee = findid[2]
-										if (findid[0] === String(id)) {
+									classicWhitelistEntries.forEach(findid => {
+										const matchGiftee = findid.extra[0]
+										if (findid.id === String(id)) {
 											if (matchGiftee) giftto = matchGiftee
 										}
 									})
@@ -679,6 +794,7 @@
 										...progress,
 										{ text: `${j + 1}/${cards.length} -> Skipping ${id} - ${reason}!`, color: 'blue' },
 									]
+									skippedCount++
 									if (mode === 'Sell' || mode === 'Gift and Sell') {
 										sellContent.push({
 											url: `${domain}/page=deck/container=${nation}/nation=${nation}/card=${id}/season=${season}/jdj=view?${urlParameters('junkDaJunk', main)}`,
@@ -747,10 +863,7 @@
 								{ text: `${k + 1}/${giftQueue.length} -> ${success} to ${attemptGiftee}`, color: 'green' },
 							]
 							giftedCards++
-							junkCounter =
-								junkMethod === 'API'
-									? `API has junked ${junkedCards}. API has gifted ${giftedCards}. API has processed ${junkedCards + giftedCards} in total.`
-									: ''
+							junkCounter = `API has junked ${junkedCards}. API has gifted ${giftedCards}. API has processed ${junkedCards + giftedCards} in total.`
 						}
 					}
 				} else {
@@ -770,6 +883,19 @@
 				color: 'green',
 			},
 		]
+		const totalJunked = Object.values(junkRarityCounts).reduce((a, b) => a + b, 0)
+		const rarityLine =
+			Object.entries(junkRarityCounts)
+				.map(([r, c]) => `${r}: ${c}`)
+				.join(', ') || 'none'
+
+		const totalStat = {
+			text: `Junked ${totalJunked} (${rarityLine}) — ${junkBankTotal.toFixed(2)} bank. Gifted ${giftedCards}. Skipped ${skippedCount}.`,
+			color: 'purple',
+		}
+
+		info = [totalStat, ...info]
+		progress = [...progress, totalStat]
 		if (content.length > 0) downloadable = true
 		stoppable = false
 		window.removeEventListener('beforeunload', beforeUnload)
@@ -835,13 +961,11 @@
 
 		{#if configMode === 'Rules'}
 			<RuleDashboard bind:rules />
-			<FormSelect bind:bindValue={junkMethod} id="junkMethod" items={['API', 'Manual']} label="Junk Mode" />
 			<FormInput label={'Process Up To'} bind:bindValue={junkUpTo} id="junkUpTo" required={true} />
 		{:else}
 			{#if mode === 'Gift' || mode === 'Gift and Sell'}
 				<FormTextArea label={'Gift To'} bind:bindValue={giftee} id="giftee" required={true} />
 			{/if}
-			<FormSelect bind:bindValue={junkMethod} id="junkMethod" items={['API', 'Manual']} label="Junk Mode" />
 			<FormSelect bind:bindValue={checkMode} id="checkMode" items={['Advanced', 'Simple']} label="Mode" />
 			<div class="-mb-6 flex flex-col">
 				<p class="text-muted-foreground mb-1 text-center font-light">Presets</p>

@@ -23,7 +23,7 @@
 	let errors: Array<{ field: string | number; message: string }> = $state([])
 
 	onMount(() => {
-		domain = `https://${localStorage.getItem('connectionUrl') || 'www'}.nationstates.net`
+		domain = `https://www.nationstates.net`
 		main = page.url.searchParams.get('main') || (localStorage.getItem('main') as string) || ''
 		puppets = (localStorage.getItem('puppets') as string) || ''
 		password = (localStorage.getItem('password') as string) || ''
@@ -33,7 +33,7 @@
 		let res = await fetch(`${domain}/cgi-bin/api.cgi?nation=${username}&q=ping`, {
 			headers: {
 				'X-Password': password,
-				'User-Agent': `${userAgent} using Pinger`,
+				'User-Agent': `${userAgent} using Pinger by Kractero`,
 			},
 		})
 		const existence = res.status
@@ -48,7 +48,7 @@
 		if (existence === 404) return false
 		if (existence === 200 || existence === 409) return true
 		if (res.status === 429) {
-			const waitTime = retryAfter > 0 ? retryAfter : ratelimitReset / ratelimitRemaining
+			const waitTime = retryAfter || ratelimitReset || 30
 			await sleep(waitTime * 1000)
 			return await checkForExistence(userAgent, username, password)
 		}

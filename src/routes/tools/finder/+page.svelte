@@ -37,7 +37,7 @@
 	let findMode = $state('Specific Cards')
 
 	onMount(() => {
-		domain = `https://${localStorage.getItem('connectionUrl') || 'www'}.nationstates.net`
+		domain = `https://www.nationstates.net`
 		main = page.url.searchParams.get('main') || (localStorage.getItem('main') as string) || ''
 		puppets = (localStorage.getItem('puppets') as string) || ''
 		finderlist = (localStorage.getItem('finderList') as string) || ''
@@ -52,7 +52,7 @@
 			: localStorage.getItem('giftLegendaries') !== null
 				? localStorage.getItem('giftLegendaries') === 'true'
 				: true
-		keepOne = page.url.searchParams.get('keepOne') || localStorage.getItem('keepOne') || '1'
+		keepOne = String(parseInt(page.url.searchParams.get('keepOne') || localStorage.getItem('keepOne') || '1') || 0)
 		giftOverMVValue = parseFloat(
 			page.url.searchParams.get('giftOverMVValue') || localStorage.getItem('giftOverMVValue') || '10'
 		)
@@ -145,13 +145,11 @@
 
 				xpin = newXpin
 
-				console.log(fail)
 				if (fail === 'no capacity' || fail === `No such nation: "${cg}".`) {
 					info = [...info, { text: `${nation} failed to gift ${id} to ${cg}, ${fail}`, color: 'red' }]
 					if (!overrideGiftee) gifteeList.shift()
 					if (overrideGiftee) overrideGiftee = ''
 					attemptGiftee = gifteeList[0] || ''
-					console.log(attemptGiftee)
 					continue
 				}
 
@@ -166,6 +164,7 @@
 
 				progress = [...progress, { text: `${nation} gifted ${id} to ${cg}`, color: 'green' }]
 				giftedCards.add(`${id},${season}`)
+				console.log(giftedCards)
 				return { success: true, xpin }
 			}
 
@@ -245,6 +244,15 @@
 
 								for (let i = 0; i < frequency; i++) {
 									if (abortController.signal.aborted || stopped) {
+										break
+									}
+
+									if (giftedCards.has(`${id},${season}`) && mode === 'Gift One') {
+										progress = [...progress, { text: `Already gifted ${id}`, color: 'blue' }]
+										break
+									}
+									if (soldCards.has(`${id},${season}`) && mode === 'Sell One') {
+										progress = [...progress, { text: `Already sold ${id}`, color: 'blue' }]
 										break
 									}
 
@@ -340,7 +348,7 @@
 
 							const cardIndex = new Map<string, number>()
 							for (const card of cards) {
-								const key = `${card.CARDID}|${card.SEASON}`
+								const key = `${card.CARDID},${card.SEASON}`
 								cardIndex.set(key, (cardIndex.get(key) || 0) + 1)
 							}
 
@@ -348,7 +356,7 @@
 							const filteredCards: Array<{ id: string; giftee: string; season: string; count: number }> = []
 
 							for (const match of matches) {
-								const key = `${match.id}|${match.season}`
+								const key = `${match.id},${match.season}`
 								if (seen.has(key)) continue
 								seen.add(key)
 
@@ -365,16 +373,17 @@
 
 							if (filteredCards && filteredCards.length > 0) {
 								for (const { id, season, count: originalCount, giftee } of filteredCards) {
-									if (giftedCards.has(id) && mode === 'Gift One') {
+									if (giftedCards.has(`${id},${season}`) && mode === 'Gift One') {
 										progress = [...progress, { text: `Already gifted ${id}`, color: 'blue' }]
 										continue
 									}
-									if (soldCards.has(id) && mode === 'Sell One') {
+
+									if (soldCards.has(`${id},${season}`) && mode === 'Sell One') {
 										progress = [...progress, { text: `Already sold ${id}`, color: 'blue' }]
 										continue
 									}
 
-									const effectiveCount = keepOne ? originalCount - Number(keepOne) : originalCount
+									const effectiveCount = originalCount - (Number(keepOne) || 0)
 									if (effectiveCount <= 0) {
 										if (foundSet.has(`${id},${season}`)) foundSet.delete(`${id},${season}`)
 										continue
@@ -394,6 +403,15 @@
 											break
 										}
 										if (abortController.signal.aborted || stopped) {
+											break
+										}
+
+										if (giftedCards.has(`${id},${season}`) && mode === 'Gift One') {
+											progress = [...progress, { text: `Already gifted ${id}`, color: 'blue' }]
+											break
+										}
+										if (soldCards.has(`${id},${season}`) && mode === 'Sell One') {
+											progress = [...progress, { text: `Already sold ${id}`, color: 'blue' }]
 											break
 										}
 
@@ -546,10 +564,14 @@
 	}
 
 	async function fetchPreset(name: string) {
+		if (name === 'S1CTE') {
+			const { default: raw } = await import('$lib/data/s1cte.txt?raw')
+			finderlist = raw.split('\n').filter(Boolean).join('\n')
+			return
+		}
 		const presets: {
 			[key: string]: string | { [key: string]: string }
 		} = await import('$lib/data/finderPresets.json')
-
 		finderlist = presets[name] as string
 	}
 </script>
@@ -594,6 +616,7 @@
 			<div class="-mb-6 flex flex-col">
 				<p class="text-muted-foreground mb-1 text-center font-light">Presets</p>
 				<div class="flex flex-wrap justify-center">
+					<Button tabindex={-1} onclick={() => fetchPreset('S1CTE')} variant="outline">S1 CTE</Button>
 					<Button tabindex={-1} onclick={() => fetchPreset('Legendaries')} variant={'outline'}>Legendaries</Button>
 					<Button tabindex={-1} onclick={() => fetchPreset('Fauzjhia')} variant={'outline'}>Fauzjhia</Button>
 					<Button tabindex={-1} onclick={() => fetchPreset('Mikeswill')} variant={'outline'}>Mikeswill</Button>

@@ -18,7 +18,7 @@
 	let errors: Array<{ field: string | number; message: string }> = $state([])
 
 	onMount(async () => {
-		domain = `https://${localStorage.getItem('connectionUrl') || 'www'}.nationstates.net`
+		domain = `https://www.nationstates.net`
 		main = page.url.searchParams.get('main') || (localStorage.getItem('main') as string) || ''
 		puppets = (localStorage.getItem('puppets') as string) || ''
 	})
@@ -47,11 +47,13 @@
 			} else {
 				if (link.includes('page=')) {
 					modifiedLink = link.replace(/page=/, `nation=${nation_formatted}/container=${nation_formatted}/page=`)
+				} else if (link.includes('region=')) {
+					modifiedLink = link.replace(/region=/, `nation=${nation_formatted}/container=${nation_formatted}/region=`)
 				}
 			}
 
 			content.push({
-				url: `${modifiedLink}?${urlParameters(`Sheetify`, main)}`,
+				url: `${modifiedLink}${modifiedLink.includes('?') ? '&' : '?'}${urlParameters('Sheetify', main)}`,
 				tableText: `Link ${i}`,
 			})
 		}
