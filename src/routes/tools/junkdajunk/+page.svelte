@@ -3,7 +3,6 @@
 	import { page } from '$app/state'
 	import Buttons from '$lib/components/Buttons.svelte'
 	import OpenButton from '$lib/components/buttons/OpenButton.svelte'
-	import FormCheckbox from '$lib/components/FormCheckbox.svelte'
 	import FormInput from '$lib/components/FormInput.svelte'
 	import FormSelect from '$lib/components/FormSelect.svelte'
 	import FormTextArea from '$lib/components/FormTextArea.svelte'
@@ -60,7 +59,6 @@
 	let password = $state('')
 	let owners = $state('')
 	let cardcount = $state('')
-	let junkMethod = $state('API')
 	let checkMode = $state('Advanced')
 	let raritiesMV: Prices = $state(defaultPrices)
 	let raritiesLowestBid: Prices = $state(defaultPrices)
@@ -92,17 +90,20 @@
 	})
 
 	onMount(() => {
-		domain = `https://${localStorage.getItem('connectionUrl') || 'www'}.nationstates.net`
+		domain = `https://www.nationstates.net`
 		main = page.url.searchParams.get('main') || (localStorage.getItem('main') as string) || ''
 		puppets = (localStorage.getItem('gotissuesPuppets') as string) || ''
 		password = (localStorage.getItem('password') as string) || ''
+		configMode =
+			page.url.searchParams.get('configMode') === 'Rules'
+				? 'Rules'
+				: localStorage.getItem('junkdajunkConfigMode') || 'Classic'
 		mode =
 			page.url.searchParams.get('mode') ||
 			(localStorage.getItem('jdjMode') as string) ||
 			(localStorage.getItem('finderMode') as string) ||
 			'Gift'
 		checkMode = page.url.searchParams.get('checkMode') || (localStorage.getItem('jdjCheckMode') as string) || 'Advanced'
-		junkMethod = page.url.searchParams.get('junk') || (localStorage.getItem('junkMethod') as string) || 'API'
 		regionalwhitelist =
 			page.url.searchParams.get('regions')?.replaceAll(',', '\n') ||
 			(localStorage.getItem('junkdajunkRegionalWhitelist') as string) ||
@@ -140,7 +141,6 @@
 			localStorage.getItem('junkdajunkExnation') === 'true' ||
 			false
 		junkUpTo = page.url.searchParams.get('junkUpTo') || (localStorage.getItem('junkUpTo') as string) || '-1'
-		configMode = localStorage.getItem('junkdajunkConfigMode') || 'Classic'
 		try {
 			const savedRules = localStorage.getItem('junkdajunkRules')
 			if (savedRules) rules = JSON.parse(savedRules)
@@ -168,9 +168,7 @@
 		return new Set((data.cards || []).map(card => `${Number(card.id)},${season}`))
 	}
 
-	async function fetchKotamaCardIdCache(
-		entries: { key: string; clause: string }[]
-	): Promise<Map<string, Set<string>>> {
+	async function fetchKotamaCardIdCache(entries: { key: string; clause: string }[]): Promise<Map<string, Set<string>>> {
 		const cardIds = new Map<string, Set<string>>()
 		if (entries.length === 0) return cardIds
 
@@ -230,7 +228,7 @@
 				return {
 					...condition,
 					attribute: 'Card ID' as const,
-					operator: ['=', 'in list'].includes(condition.operator) ? 'in list' as const : 'not in list' as const,
+					operator: ['=', 'in list'].includes(condition.operator) ? ('in list' as const) : ('not in list' as const),
 					value: sortCardIds([...ids]).join('\n'),
 				}
 			})
@@ -254,18 +252,31 @@
 			rule =>
 				rule.enabled &&
 				rule.conditions.some(condition => {
-					if (condition.attribute !== 'Card ID' || !['in list', 'not in list'].includes(condition.operator)) return false
+					if (condition.attribute !== 'Card ID' || !['in list', 'not in list'].includes(condition.operator))
+						return false
 					return condition.value
 						.split('\n')
 						.map(line => line.trim())
 						.filter(Boolean)
 						.some(line => {
-							const parts = line.split(',').map(part => part.trim()).filter(Boolean)
+							const parts = line
+								.split(',')
+								.map(part => part.trim())
+								.filter(Boolean)
 							return parts.length > 1 && !(parts.length === 2 && cardSeasons.includes(parts[1]))
 						})
 				})
 		)
 		return ruleIndex === -1 ? undefined : ruleIndex
+	}
+
+	const rarityBank: Record<string, number> = {
+		common: 0.01,
+		uncommon: 0.05,
+		rare: 0.1,
+		'ultra-rare': 0.2,
+		epic: 0.5,
+		legendary: 1,
 	}
 
 	async function onSubmit(e: Event) {
@@ -274,9 +285,21 @@
 			return
 		}
 		e.preventDefault()
-		pushHistory(
-			`?main=${main}&mode=${mode}&junkMethod=${junkMethod}&checkMode=${checkMode}${giftee ? `&giftee=${giftee.split('\n').join(',')}` : ''}${owners ? `&owners=${owners}` : ''}${cardcount ? `&cardcount=${cardcount}` : ''}${regionalwhitelist ? `&regions=${regionalwhitelist.replaceAll('\n', ',')}` : ''}${flagwhitelist ? `&flags=${flagwhitelist.replaceAll('\n', ',')}` : ''}${skipseason && skipseason.length > 0 ? `&skipseason=${skipseason}` : ''}${skipexnation ? `&skipexnation=${skipexnation}` : ''}${junkUpTo ? `&junkUpTo=${junkUpTo}` : ''}`
-		)
+		const classicMode = configMode === 'Classic'
+		const historyParams = new URLSearchParams({ main, configMode })
+		if (junkUpTo) historyParams.set('junkUpTo', junkUpTo)
+		if (classicMode) {
+			historyParams.set('mode', mode)
+			historyParams.set('checkMode', checkMode)
+			if (giftee) historyParams.set('giftee', giftee.split('\n').join(','))
+			if (owners) historyParams.set('owners', owners)
+			if (cardcount) historyParams.set('cardcount', cardcount)
+			if (regionalwhitelist) historyParams.set('regions', regionalwhitelist.replaceAll('\n', ','))
+			if (flagwhitelist) historyParams.set('flags', flagwhitelist.replaceAll('\n', ','))
+			if (skipseason && skipseason.length > 0) historyParams.set('skipseason', skipseason.join(','))
+			if (skipexnation) historyParams.set('skipexnation', String(skipexnation))
+		}
+		pushHistory(`?${historyParams.toString()}`)
 		errors = checkUserAgent(main)
 		if (errors.length > 0) return
 		window.addEventListener('beforeunload', beforeUnload)
@@ -290,27 +313,32 @@
 		let puppetList = puppets.split('\n')
 		const newInfo = []
 
-		newInfo.push({ text: `Initiating JunkDaJunk with ${checkMode} ${junkMethod} ${mode}` })
+		newInfo.push({
+			text: classicMode
+				? `Initiating JunkDaJunk with ${checkMode} ${mode}`
+				: `Initiating JunkDaJunk with Rules`,
+		})
 
-		const regionalWhitelist = regionalwhitelist ? regionalwhitelist.split('\n').map(region => canonicalize(region)) : []
+		const regionalWhitelist =
+			classicMode && regionalwhitelist ? regionalwhitelist.split('\n').map(region => canonicalize(region)) : []
 		if (regionalWhitelist.length > 0) {
 			newInfo.push({ text: `Whitelisting regions: ${regionalWhitelist.map(region => region.trim()).join(', ')}` })
 		}
-		const flagWhitelist = flagwhitelist ? flagwhitelist.split('\n') : []
+		const flagWhitelist = classicMode && flagwhitelist ? flagwhitelist.split('\n') : []
 		if (flagWhitelist.length > 0) {
 			newInfo.push({ text: `Whitelisting flags: ${flagWhitelist.map(flag => flag.trim()).join(', ')}` })
 		}
 
-		if (finderlist) {
+		if (classicMode && finderlist) {
 			const count = finderlist.split('\n').filter(Boolean).length
 			if (count > 0) {
 				newInfo.push({ text: `Whitelisting cards: ${count} cards whitelisted` })
 			}
 		}
 
-		if (skipseason && skipseason.length > 0) newInfo.push({ text: `Skipping seasons: ${skipseason}` })
+		if (classicMode && skipseason && skipseason.length > 0) newInfo.push({ text: `Skipping seasons: ${skipseason}` })
 
-		if (skipexnation === true) newInfo.push({ text: `Skipping s1 exnations` })
+		if (classicMode && skipexnation === true) newInfo.push({ text: `Skipping s1 exnations` })
 
 		// for (const [rarity, threshold] of Object.entries(raritiesMV))
 		// 	newInfo.push({ text: `${rarity} junk threshold at ${threshold}` })
@@ -318,8 +346,8 @@
 		// for (const [rarity, bid] of Object.entries(raritiesLowestBid))
 		// 	newInfo.push({ text: `${rarity} junk threshold at ${bid}` })
 
-		const findSplit = parseCardList(finderlist)
-		const whitelistSet = new Set(findSplit.map(f => `${f.id},${f.season || ''}`))
+		const classicWhitelistEntries = classicMode ? parseCardList(finderlist) : []
+		const whitelistSet = new Set(classicWhitelistEntries.map(f => `${f.id},${f.season || ''}`))
 
 		info = newInfo
 
@@ -342,6 +370,9 @@
 		let junkedCards = 0
 		let giftedCards = 0
 		let actionCount = 0
+		let junkRarityCounts: Record<string, number> = {}
+		let junkBankTotal = 0
+		let skippedCount = 0
 		let currCard = 0
 		let currSellCard = 0
 		let regionCardIds = new Map<string, Set<string>>()
@@ -415,11 +446,12 @@
 						let reason = ''
 						let giftTarget = ''
 
-						if (whitelistSet.has(`${id},${season}`)) {
+						if (classicMode && whitelistSet.has(`${id},${season}`)) {
 							progress = [
 								...progress,
 								{ text: `${j + 1}/${cards.length} -> Skipping S${season} ${id} - whitelisted`, color: 'blue' },
 							]
+							skippedCount++
 							continue
 						}
 
@@ -506,6 +538,7 @@
 										color: 'gray',
 									},
 								]
+								skippedCount++
 								junk = false
 								sell = false
 							} else if (giftTarget) {
@@ -546,6 +579,7 @@
 										color: 'gray',
 									},
 								]
+								skippedCount++
 								junk = false
 								sell = false
 							}
@@ -565,11 +599,14 @@
 									reason: `category set to gift`,
 								},
 								{
-									check: () => regionCardIds.size > 0 && [...regionCardIds.values()].some(set => set.has(`${Number(id)},${season}`)),
+									check: () =>
+										regionCardIds.size > 0 &&
+										[...regionCardIds.values()].some(set => set.has(`${Number(id)},${season}`)),
 									reason: `is in whitelisted region`,
 								},
 								{
-									check: () => flagCardIds.size > 0 && [...flagCardIds.values()].some(set => set.has(`${Number(id)},${season}`)),
+									check: () =>
+										flagCardIds.size > 0 && [...flagCardIds.values()].some(set => set.has(`${Number(id)},${season}`)),
 									reason: `is in whitelisted flag`,
 								},
 								{
@@ -656,7 +693,7 @@
 								}
 							}
 
-							findSplit.forEach(findid => {
+							classicWhitelistEntries.forEach(findid => {
 								if (cardListEntryMatches(findid, id, season)) {
 									junk = false
 									reason = findid.season
@@ -667,64 +704,47 @@
 						}
 
 						if (junk && sell) {
-							if (junkMethod === 'Manual') {
-								progress = [
-									...progress,
-									{
-										text: `${j + 1}/${
-											cards.length
-										} -> Adding to junk sheet S${season} ${category.toUpperCase()} ${id} with mv ${marketValue}`,
-									},
-								]
+							progress = [
+								...progress,
+								{
+									text: `${j + 1}/${
+										cards.length
+									} -> Junking S${season} ${category.toUpperCase()} ${id} with mv ${marketValue}`,
+								},
+							]
+							let token = ''
+							const url = `${domain}/cgi-bin/api.cgi?nation=${nation}&cardid=${id}&season=${season}&mode=`
+							const prepare = await parseXML(
+								`${url}prepare&c=junkcard`,
+								main,
+								currentNationXPin ? '' : nationSpecificPassword ? nationSpecificPassword : password,
+								currentNationXPin || ''
+							)
+
+							if (!currentNationXPin) currentNationXPin = prepare['x-pin'] || ''
+
+							token = prepare.NATION.SUCCESS
+
+							const junkResponse = await parseXML(
+								`${url}execute&c=junkcard&token=${token}`,
+								main,
+								'',
+								currentNationXPin
+							)
+
+							if (junkResponse.NATION && junkResponse.NATION.ERROR) {
+								info = [...info, { text: `${nation} failed to junk ${id}, adding to sheet`, color: 'red' }]
 								content.push({
 									url: `${domain}/container=${nation}/nation=${nation}/page=ajax3/a=junkcard/card=${id}/season=${season}?${urlParameters('junkDaJunk', main)}&autoclose=1`,
 									tableText: `Link to Junk`,
 								})
 								currCard = currCard + 1
 							} else {
-								progress = [
-									...progress,
-									{
-										text: `${j + 1}/${
-											cards.length
-										} -> Junking S${season} ${category.toUpperCase()} ${id} with mv ${marketValue}`,
-									},
-								]
-								let token = ''
-								const url = `${domain}/cgi-bin/api.cgi?nation=${nation}&cardid=${id}&season=${season}&mode=`
-								const prepare = await parseXML(
-									`${url}prepare&c=junkcard`,
-									main,
-									currentNationXPin ? '' : nationSpecificPassword ? nationSpecificPassword : password,
-									currentNationXPin || ''
-								)
-
-								if (!currentNationXPin) currentNationXPin = prepare['x-pin'] || ''
-
-								token = prepare.NATION.SUCCESS
-
-								const junkResponse = await parseXML(
-									`${url}execute&c=junkcard&token=${token}`,
-									main,
-									'',
-									currentNationXPin
-								)
-
-								if (junkResponse.NATION && junkResponse.NATION.ERROR) {
-									info = [...info, { text: `${nation} failed to junk ${id}, adding to sheet`, color: 'red' }]
-									content.push({
-										url: `${domain}/container=${nation}/nation=${nation}/page=ajax3/a=junkcard/card=${id}/season=${season}?${urlParameters('junkDaJunk', main)}&autoclose=1`,
-										tableText: `Link to Junk`,
-									})
-									currCard = currCard + 1
-								} else {
-									junkedCards = junkedCards + 1
-									actionCount = actionCount + 1
-									junkCounter =
-										junkMethod === 'API'
-											? `API has junked ${junkedCards}. API has gifted ${giftedCards}. API has processed ${junkedCards + giftedCards} in total.`
-											: ''
-								}
+								junkedCards = junkedCards + 1
+								junkRarityCounts[category] = (junkRarityCounts[category] || 0) + 1
+								junkBankTotal += rarityBank[category] ?? 0
+								actionCount = actionCount + 1
+								junkCounter = `API has junked ${junkedCards}. API has gifted ${giftedCards}. API has processed ${junkedCards + giftedCards} in total.`
 							}
 						} else {
 							if (configMode === 'Rules') {
@@ -737,6 +757,7 @@
 												color: 'blue',
 											},
 										]
+										skippedCount++
 									}
 									const activeNation = giftTarget ? giftTarget : nation
 									sellContent.push({
@@ -749,7 +770,7 @@
 								// Classic Mode
 								if (mode === 'Gift' || (mode === 'Gift and Sell' && sell === true)) {
 									let giftto = gifteeQueue[0]
-									findSplit.forEach(findid => {
+									classicWhitelistEntries.forEach(findid => {
 										const matchGiftee = findid.extra[0]
 										if (findid.id === String(id)) {
 											if (matchGiftee) giftto = matchGiftee
@@ -773,6 +794,7 @@
 										...progress,
 										{ text: `${j + 1}/${cards.length} -> Skipping ${id} - ${reason}!`, color: 'blue' },
 									]
+									skippedCount++
 									if (mode === 'Sell' || mode === 'Gift and Sell') {
 										sellContent.push({
 											url: `${domain}/page=deck/container=${nation}/nation=${nation}/card=${id}/season=${season}/jdj=view?${urlParameters('junkDaJunk', main)}`,
@@ -841,10 +863,7 @@
 								{ text: `${k + 1}/${giftQueue.length} -> ${success} to ${attemptGiftee}`, color: 'green' },
 							]
 							giftedCards++
-							junkCounter =
-								junkMethod === 'API'
-									? `API has junked ${junkedCards}. API has gifted ${giftedCards}. API has processed ${junkedCards + giftedCards} in total.`
-									: ''
+							junkCounter = `API has junked ${junkedCards}. API has gifted ${giftedCards}. API has processed ${junkedCards + giftedCards} in total.`
 						}
 					}
 				} else {
@@ -864,6 +883,19 @@
 				color: 'green',
 			},
 		]
+		const totalJunked = Object.values(junkRarityCounts).reduce((a, b) => a + b, 0)
+		const rarityLine =
+			Object.entries(junkRarityCounts)
+				.map(([r, c]) => `${r}: ${c}`)
+				.join(', ') || 'none'
+
+		const totalStat = {
+			text: `Junked ${totalJunked} (${rarityLine}) — ${junkBankTotal.toFixed(2)} bank. Gifted ${giftedCards}. Skipped ${skippedCount}.`,
+			color: 'purple',
+		}
+
+		info = [totalStat, ...info]
+		progress = [...progress, totalStat]
 		if (content.length > 0) downloadable = true
 		stoppable = false
 		window.removeEventListener('beforeunload', beforeUnload)
@@ -929,13 +961,11 @@
 
 		{#if configMode === 'Rules'}
 			<RuleDashboard bind:rules />
-			<FormSelect bind:bindValue={junkMethod} id="junkMethod" items={['API', 'Manual']} label="Junk Mode" />
 			<FormInput label={'Process Up To'} bind:bindValue={junkUpTo} id="junkUpTo" required={true} />
 		{:else}
 			{#if mode === 'Gift' || mode === 'Gift and Sell'}
 				<FormTextArea label={'Gift To'} bind:bindValue={giftee} id="giftee" required={true} />
 			{/if}
-			<FormSelect bind:bindValue={junkMethod} id="junkMethod" items={['API', 'Manual']} label="Junk Mode" />
 			<FormSelect bind:bindValue={checkMode} id="checkMode" items={['Advanced', 'Simple']} label="Mode" />
 			<div class="-mb-6 flex flex-col">
 				<p class="text-muted-foreground mb-1 text-center font-light">Presets</p>

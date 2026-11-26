@@ -23,7 +23,7 @@
 	let errors: Array<{ field: string | number; message: string }> = $state([])
 
 	onMount(async () => {
-		domain = `https://${localStorage.getItem('connectionUrl') || 'www'}.nationstates.net`
+		domain = `https://www.nationstates.net`
 		main = page.url.searchParams.get('main') || (localStorage.getItem('main') as string) || ''
 		mode = page.url.searchParams.get('mode') || (localStorage.getItem('inscriptionMode') as string) || 'Banners'
 	})
@@ -43,7 +43,7 @@
 		const puppetList = puppets.split('\n').map(nation => nation.toLowerCase().replaceAll(' ', '_'))
 		for (let i = 0; i < puppetList.length; i++) {
 			content.push({
-				url: `${domain}/page=deck/container=${puppetList[i]}/nation=${puppetList[i]}/page=${mode === 'Banners' ? 'banners' : 'upload_flag'}?${urlParameters(`Inscription_Assistant_${mode}`, main)}`,
+				url: `${domain}/container=${puppetList[i]}/nation=${puppetList[i]}/page=${mode === 'Banners' ? 'banners' : 'upload_flag'}?${urlParameters(`Inscription_Assistant_${mode}`, main)}`,
 				tableText: `Link to ${puppetList[i]}`,
 			})
 		}

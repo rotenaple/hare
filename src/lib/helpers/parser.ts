@@ -13,13 +13,17 @@ let pendingLockCount = 0
 
 async function withLock<T>(fn: () => Promise<T>): Promise<T> {
 	pendingLockCount++
-	let release: () => void
+	let release!: () => void
 	const next = new Promise<void>(r => (release = r))
 	const prev = lock
 	lock = next
 	await prev
-	try { return await fn() }
-	finally { release(); pendingLockCount-- }
+	try {
+		return await fn()
+	} finally {
+		release()
+		pendingLockCount--
+	}
 }
 
 function getApplianceId(): string {
@@ -27,19 +31,29 @@ function getApplianceId(): string {
 }
 
 let _casBase = ''
+let _casUrl = ''
 let _nextToken = ''
 
 async function resolveCAS(): Promise<string> {
-	if (_casBase) return _casBase
 	const raw = (localStorage.getItem('casUrl') ?? '').replace(/\/+$/, '').replace(/^https?:\/\//, '')
-	if (!raw) return ''
+	if (!raw) {
+		_casBase = ''
+		_casUrl = ''
+		return ''
+	}
+	if (_casBase && _casUrl === raw) return _casBase
 	for (const scheme of ['http', 'https']) {
 		try {
-			await fetch(`${scheme}://${raw}/healthz`, { signal: AbortSignal.timeout(2000) })
-			_casBase = `${scheme}://${raw}`
-			return _casBase
+			const base = `${scheme}://${raw}`
+			const response = await fetch(`${base}/healthz`, { signal: AbortSignal.timeout(2000) })
+			if (!response.ok) continue
+			_casBase = base
+			_casUrl = raw
+			return base
 		} catch {}
 	}
+	_casBase = ''
+	_casUrl = ''
 	return ''
 }
 
@@ -55,7 +69,7 @@ async function reportAndNext(casBase: string, body: Record<string, unknown>): Pr
 	return data.token ?? ''
 }
 
-async function casFetch(url: string, userAgent: string, headers: Record<string, string>, password?: string) {
+async function casFetch(url: string, headers: Record<string, string>, userAgent: string): Promise<Response | null> {
 	const casBase = await resolveCAS()
 	if (!casBase) return null
 
@@ -64,18 +78,20 @@ async function casFetch(url: string, userAgent: string, headers: Record<string, 
 			const applianceId = getApplianceId()
 			const queuedAt = Date.now()
 
-		const token = _nextToken || await (async () => {
-				const backlog = Math.max(0, pendingLockCount - 1)
-				const acq = await fetch(`${casBase}/acquire`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ appliance_id: applianceId, priority_class: 'P1_HIGH', backlog }),
-					signal: AbortSignal.timeout(35_000),
-				})
-				if (!acq.ok) return ''
-				const data = await acq.json()
-				return data.token ?? ''
-			})()
+			const token =
+				_nextToken ||
+				(await (async () => {
+					const backlog = Math.max(0, pendingLockCount - 1)
+					const acq = await fetch(`${casBase}/acquire`, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ appliance_id: applianceId, priority_class: 'P1_HIGH', backlog }),
+						signal: AbortSignal.timeout(35_000),
+					})
+					if (!acq.ok) return ''
+					const data = await acq.json()
+					return data.token ?? ''
+				})())
 			if (!token) return null
 
 			_nextToken = ''
@@ -106,17 +122,10 @@ async function casFetch(url: string, userAgent: string, headers: Record<string, 
 				retry_after: Number(response.headers.get('Retry-After') ?? 0),
 			})
 
-			if (response.status === 404) return { status: 'failed with error code 404' }
-			if (response.status === 409) return { status: 'failed with error code 409' }
-			if (response.status === 429) {
-				_nextToken = ''
-				return null
-			}
+			// Let the caller retry through CAS instead of falling back to an uncoordinated request.
+			if (response.status === 429) _nextToken = ''
 
-			const xml = await response.text()
-			const xmlObj = parser.parse(xml)
-			if (response.headers.get('x-pin')) xmlObj['x-pin'] = response.headers.get('x-pin') || ''
-			return xmlObj
+			return response
 		})
 	} catch {
 		return null
@@ -136,49 +145,55 @@ export async function parseXML(url: string, userAgent: string, password?: string
 		headers['X-Pin'] = xpin
 	}
 
-	if (typeof localStorage !== 'undefined') {
-		const result = await casFetch(url, userAgent, headers, password)
-		if (result) return result
-	}
-
 	try {
-		const response = await fetch(`${url}&userAgent=${userAgent} using Hare by Kractero`, {
-			method: 'GET',
-			headers,
-		})
+		for (;;) {
+			let response: Response | null = null
+			if (typeof localStorage !== 'undefined') {
+				response = await casFetch(url, headers, userAgent)
+			}
+			const coordinated = response !== null
+			response ??= await fetch(`${url}&userAgent=${userAgent} using Hare by Kractero`, {
+				method: 'GET',
+				headers,
+			})
 
-		const ratelimitRemaining = Number(response.headers.get('RateLimit-Remaining'))
-		const ratelimitReset = Number(response.headers.get('RateLimit-Reset'))
-		const retryAfter = Number(response.headers.get('Retry-After'))
+			const ratelimitRemaining = Number(response.headers.get('RateLimit-Remaining'))
+			const ratelimitReset = Number(response.headers.get('RateLimit-Reset'))
+			const retryAfter = Number(response.headers.get('Retry-After'))
 
-		if (response.status === 404) {
-			return { status: `failed with error code 404` }
+			if (!response.ok) {
+				if (response.status === 429) {
+					const waitTime = retryAfter || ratelimitReset || 30
+					await sleep(waitTime * 1000)
+					continue
+				}
+
+				const code = response.status
+				const text = await response.text()
+				const match = text.match(/<h1[^>]*>(.*?)<\/h1>/s)
+				const message = match?.[1]?.trim()
+				throw new Error(message || `failed with error code ${code}`)
+			}
+
+			// CAS hands out tokens at the API's pace; direct requests still need local throttling.
+			if (!coordinated) {
+				if (ratelimitRemaining > 0) {
+					await sleep((ratelimitReset / ratelimitRemaining) * 1000)
+				} else {
+					await sleep(ratelimitReset * 1000)
+				}
+			}
+
+			const xml = await response.text()
+			const xmlObj = parser.parse(xml)
+			if (response.headers.get('x-pin')) xmlObj['x-pin'] = response.headers.get('x-pin') || ''
+
+			return xmlObj
 		}
-
-		if (response.status === 409) {
-			return { status: `failed with error code 409` }
-		}
-
-		if (response.status === 429) {
-			const waitTime = retryAfter > 0 ? retryAfter : ratelimitReset / ratelimitRemaining
-			await sleep(waitTime * 1000)
-			return await parseXML(url, userAgent, password ? password : '')
-		}
-
-		if (ratelimitRemaining > 0) {
-			await sleep((ratelimitReset / ratelimitRemaining) * 1000)
-		} else {
-			await sleep(ratelimitReset * 1000)
-		}
-
-		const xml = await response.text()
-		const xmlObj = parser.parse(xml)
-		if (response.headers.get('x-pin')) xmlObj['x-pin'] = response.headers.get('x-pin') || ''
-
-		return xmlObj
 	} catch (error) {
 		if (error instanceof Error) {
 			log('error', error.message)
 		}
+		throw error
 	}
 }

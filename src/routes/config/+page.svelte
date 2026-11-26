@@ -14,7 +14,6 @@
 	import { toast } from 'svelte-sonner'
 
 	const localStorageObject: { [key: string]: any } = $state({
-		connectionUrl: 'www',
 		theme: 'system',
 		casUrl: '',
 		puppets: '',
@@ -41,7 +40,6 @@
 		junkdajunkFlagWhitelist: '',
 		junkdajunkFinderList: '',
 		jdjMode: 'Gift',
-		junkMethod: 'API',
 		jdjCheckMode: 'Advanced',
 		findMode: 'Specific Cards',
 		giftLegendaries: true,
@@ -177,11 +175,6 @@
 	<form onsubmit={onSubmit} class="flex flex-col gap-8">
 		<h2 class="text-center text-2xl font-bold tracking-tight">General Config</h2>
 		<FormSelect
-			id="connectionsubdomain"
-			label="Connection Subdomain"
-			bind:bindValue={localStorageObject.connectionUrl}
-			items={['www', 'fast']} />
-		<FormSelect
 			id="theme"
 			label="Theme"
 			bind:bindValue={localStorageObject.theme}
@@ -266,11 +259,6 @@
 			required={false} />
 		<FormInput label="Gift To" bind:bindValue={localStorageObject.finderGiftee} id="giftee" />
 		<h2 class="text-center text-2xl font-bold tracking-tight">JunkDaJunk</h2>
-		<FormSelect
-			bind:bindValue={localStorageObject.junkMethod}
-			id="junkMethod"
-			items={['API', 'Manual']}
-			label="Junk Mode" />
 		<FormSelect
 			bind:bindValue={localStorageObject.jdjCheckMode}
 			id="checkMode"
